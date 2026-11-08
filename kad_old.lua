@@ -1,24 +1,35 @@
--- Wait for Roblox to load before evaluating settings or initializing the script.
-if not game:IsLoaded() then
-    game.Loaded:Wait()
-end
+-- MAINTENANCE: Whenever a new Workspace path is used anywhere in this script,
+-- add it to WORLD_KEEP or PLOT_KEEP below (unless its subtree is already kept).
+-- Workspace auto deletion and Run once must never delete paths the script uses.
+local scriptLoadedAt = os.time()
 
--- EDIT SETTINGS HERE. Delays/timeouts are in seconds; distances are in studs.
 local CONFIG = {
     General = {
-        DeleteOtherPlots = true, -- Master tab toggle; removes other plots and clears local weather effects while ON.
-        MasterFlySpeed = 40, -- Noclip/hover during Master or Hotbar Upgrades; WASD flies, Space rises, Left Ctrl descends.
-        LoadTimeout = 15,
-        SettleTime = 0.75, -- Allow game UI/state to settle between actions.
+        DeleteOtherPlots = true,
+        WorkspaceCleanupEnabled = false,
+        MasterFlySpeed = 40,
+        LoadTimeout = math.huge, -- Unlimited waits; retry reports are configured under Logging.
+        RetryInterval = 1,
+        SettleTime = 0.75,
+        StartupTeleportClickInterval = 1,
+        StartupCollectDelay = 0.5,
+        StartupTeleportMinDistance = 10,
         ScanPoll = 0.1,
         WaitPoll = 0.05,
         ButtonDebounce = 0.25,
-        DefaultClickEvent = "MouseButton1Click", -- Or "Activated" if detection is unavailable.
+        DefaultClickEvent = "MouseButton1Click",
+    },
+    DailyRewards = {
+        DefaultSpinEnabled = true,
+        DefaultRedeemEnabled = true,
+        SpinInterval = 24 * 60 * 60 + 10,
+        CodeDelay = 2,
+        Codes = { "Hallowkeep", "Moonrise", "Feasts", "ONANDON", "ACES", "AZURE" },
     },
     Flow = {
-        -- Saved preferences override these defaults. true = ON; false = OFF.
-        DefaultMasterEnabled = true, -- Automatically start Master when ON.
-        DefaultStages = { -- These switches control inclusion in Master; standalone Run still works.
+
+        DefaultMasterEnabled = false,
+        DefaultStages = {
             sell = true,
             pickaxe = true,
             upgrades = true,
@@ -28,10 +39,10 @@ local CONFIG = {
             upgradingUnit = true,
             cycleEnd = true,
         },
-        -- Reorder these seven stage IDs to change Master; update the SCRIPT FLOW guide below too.
+
         Order = { "sell", "pickaxe", "upgrades", "upgradingOldUnit", "units", "mutation", "upgradingUnit", "cycleEnd" },
         StageDelay = 0.75,
-        CycleDelay = 20, -- Seconds after cycle-end Equip Best and zone selection, including retries after errors.
+        CycleDelay = 20,
     },
     Sell = {
         TeleportDelay = 1.5,
@@ -39,7 +50,7 @@ local CONFIG = {
         StandDelay = 0.6,
         PromptHold = 0.05,
         PromptDelay = 0.3,
-        ShopTimeout = 3,
+        ShopTimeout = math.huge,
         ShopDelay = 0.3,
         SelectAllDelay = 0.6,
         SellDelay = 1.2,
@@ -50,9 +61,10 @@ local CONFIG = {
         CameraHeight = 2,
     },
     Pickaxe = {
-        -- Existing saved limits and edits in the Pickaxe tab take precedence.
-        DefaultMaxPerID = 8, -- Used for new count files / missing saved settings.
-        UnlimitedBestPickaxe = false, -- Master toggle: bypass this limit for the highest unlocked pickaxe; keep counting requests.
+
+        DefaultMaxPerID = 8,
+        UnlimitedBestPickaxe = false,
+        WaitingClickDelay = 2,
         ShopTeleportDelay = 0.5,
         MinimumPromptHold = 0.05,
         PromptHoldPadding = 0.05,
@@ -60,53 +72,52 @@ local CONFIG = {
         StandHeight = 2,
     },
     Upgrades = {
-        DiscordWebhookUrl = "https://discord.com/api/webhooks/1568681244340920331/aRrPlNNswoFe-a5VzDDf4IcwCuqbjePGpbWs1zmlejxj_j8QBXn3Nu0DqHeIB6MuTiHH", -- Paste the Discord webhook URL here. Leave empty to disable notifications.
-        SelectCurrentZone = true, -- Toggle in Cycle end; applied at cycle end after Equip Best.
-        SelectNextZone = true, -- Toggle in Cycle end; applied at cycle end after selecting current.
+        DiscordWebhookUrl = "https://discord.com/api/webhooks/1567300810436780103/SsMfBRMJrsL4o567CYVrThCgjJVIO6V5LX84h2pWpbphaJrQ7gCofJN9SSNK3OdxISft",
+        SelectCurrentZone = true,
+        SelectNextZone = true,
         RequestDelay = 0.35,
-        MaxRequestsPerNodePerCycle = 50,
-        RowScaleTolerance = 0.0001, -- Y.Scale rounding tolerance for nodes beside the next Density node.
-        -- Base node name -> MineBuySkill category (all levels).
+        RowScaleTolerance = 0.0001,
+
         NodeCategories = {
-            Deposits = "NodeCount", 
-            Luck = "Luck", 
+            Deposits = "NodeCount",
+            Luck = "Luck",
             Density = "NodeLevel",
-            Yield = "OreYield", 
-            Fracture = "NodeHealth", 
+            Yield = "OreYield",
+            Fracture = "NodeHealth",
             Unearth = "Unearth",
-            Refine = "Refine", 
-            Force = "Force", 
+            Refine = "Refine",
+            Force = "Force",
             Prospect = "Prospect",
-            Regrowth = "Regrowth", 
-            Overdrive = "Crit", 
+            Regrowth = "Regrowth",
+            Overdrive = "Crit",
             Tempo = "Tempo",
-            Motherlode = "Lode", 
-            Windfall = "Windfall", 
+            Motherlode = "Lode",
+            Windfall = "Windfall",
             Assay = "Assay",
-            Awakening = "Awaken", 
+            Awakening = "Awaken",
             CoreTap = "CoreTap",
             CoreSlot = "CoreSlot",
             Colossus = "BigNode"
         },
     },
     HotbarUpgrade = {
-        DamageTargetLevel = 130, -- Standalone Master-tab batch; Speed/Mining target live maxima.
-        IdentitySettleTime = 0.2, -- Require stable unit names/hotbar entries; selected hotbar actions wait without time limits.
-        Placement = { -- Match peter_script.luau's working M1 placement timings.
+        DamageTargetLevel = 130,
+        IdentitySettleTime = 0.2,
+        Placement = {
             TeleportDelay = 0.35, KeyHold = 0.05, EquipDelay = 0.3, AfterPromptDelay = 0.6,
         },
     },
     UpgradingOldUnit = {
-        TargetLevel = 70, -- Damage target for all displayed previous-zone required units; density must be 0.
+        TargetLevel = 70,
     },
     Units = {
-        SequenceCooldown = 5 * 60, -- Shared unit-stage cooldown; Upgrades detecting a different zone resets it.
-        UpgradeRequestDelays = { -- Seconds to wait after each individual unit upgrade request.
+        SequenceCooldown = 5 * 60,
+        UpgradeRequestDelays = {
             Damage = 0.05,
             Speed = 0.05,
-            MineSpeed = 0.05, -- Mining speed.
+            MineSpeed = 0.05,
         },
-        StatUpgrade = { -- Shared Stats-menu timing/color; eligible stats catch up before the next Damage batch.
+        StatUpgrade = {
             MinimumDamageLevel = 11,
             GreenColor = Color3.fromRGB(38, 148, 84),
             TeleportHeight = 3,
@@ -115,25 +126,8 @@ local CONFIG = {
             PanelSettleTime = 0.05,
             BeforeExitDelay = 0.05,
         },
-        FinalEquipMode = "RequiredUnits", -- "RequiredUnits" places matches; "Best" defers equipping to cycle finalization.
-        -- Both inventory refills click ONLY the current zone's Names whitelist.
-        -- Highest Content.Damage first; prefer _AnimTag on ties, and require it at density 2+.
-        -- Names match exactly, including Shiny. Placement follows hotbar slots 1-9.
-        -- Availability = matching displayed units + refreshed hotbar copies. Below minimum leaves displayed units in place.
-        -- RequiredUnitCount = 0 removes the minimum; at least one match is still needed.
-        -- Required units occupy the first RequiredUnitCount unlocked holders, lowest number first.
-        -- Enabled=true: only these slots need Diamond or higher, including quota units.
-        -- Higher tiers satisfy lower quotas; each required unit is counted once.
-        -- Quotas must fit RequiredUnitCount. Extra slots never count toward mutations.
-        -- Enabled=false skips mutation rolling and higher quotas; full Damage still requires Diamond+.
-        -- Confirmed cycle density 2+ stops rolling; Upgrades refreshes the cache as nodes change.
-        -- Full Damage at ANY density requires EVERY exact M1-M<RequiredUnitCount> slot whitelisted,
-        -- all Diamond+, with enabled quotas met or an eligible override (no high-tier quotas).
-        -- Otherwise displayed current-zone Names still get Damage up to level 10.
-        -- Eligible required slots reach MaxLevelCap before other displayed slots.
-        -- Early Equip Best only needs ALL exact required slots whitelisted and at MaxLevelCap.
-        -- At MinimumDamageLevel+, all displayed units catch up Speed/MineSpeed before the next Damage batch.
-        -- 0 = no quota. Keys use the game's capitalization.
+        FinalEquipMode = "RequiredUnits",
+
  RequiredByZone = {
             Z1 = {
                 DisplayName = "The Underground",
@@ -186,7 +180,7 @@ local CONFIG = {
                     Nightmare = 0,
                     Unreal = 0,
                 },
-                RequiredUnitCount = 8, Names = {"Whale Island Kid", "Ant King", "Awakened Shrine King"} },
+                RequiredUnitCount = 5, Names = {"Whale Island Kid", "Ant King", "Awakened Shrine King"} },
             Z5 = {
                 DisplayName = "Voidreach",
                 MaxLevelCap = 40,
@@ -199,7 +193,7 @@ local CONFIG = {
                     Nightmare = 0,
                     Unreal = 0,
                 },
-                RequiredUnitCount = 7,
+                RequiredUnitCount = 6,
                 Names = { "Makine", "Demon Cyborg", "Noon Pride", "Serious Baldy"},
             },
             Z6 = {
@@ -207,7 +201,7 @@ local CONFIG = {
                 MaxLevelCap = 40,
                 DamageBatchSize = 5, -- Damage upgrades per unit before reselecting.
                 RequiredMutations = {
-                    Platinum = 5,
+                    Platinum = 4,
                     Rainbow = 1,
                     Frozen = 2,
                     Inferno = 0,
@@ -237,7 +231,7 @@ local CONFIG = {
                 MaxLevelCap = 40,
                 DamageBatchSize = 5, -- Damage upgrades per unit before reselecting.
                 RequiredMutations = {
-                    Platinum = 5,
+                    Platinum = 4,
                     Rainbow = 1,
                     Frozen = 2,
                     Inferno = 0,
@@ -254,12 +248,12 @@ local CONFIG = {
                 RequiredMutations = {
                     Platinum = 4,
                     Rainbow = 1,
-                    Frozen = 2,
+                    Frozen = 3,
                     Inferno = 0,
                     Nightmare = 0,
                     Unreal = 0,
                 },
-                RequiredUnitCount = 7,
+                RequiredUnitCount = 8,
                 Names = {"Royal Guard", "Child The Liar Shiny", "Silver Spirit Princess"},
             },
             Z10 = {
@@ -269,12 +263,12 @@ local CONFIG = {
                 RequiredMutations = {
                     Platinum = 4,
                     Rainbow = 1,
-                    Frozen = 1,
+                    Frozen = 3,
                     Inferno = 0,
                     Nightmare = 0,
                     Unreal = 0,
                 },
-                RequiredUnitCount = 7,
+                RequiredUnitCount = 8,
                 Names = { "Vampire Emperor", "Martial Demon", "King Of Namek" },
             },
             Z11 = {
@@ -289,7 +283,7 @@ local CONFIG = {
                     Nightmare = 0,
                     Unreal = 0,
                 },
-                RequiredUnitCount = 7,
+                RequiredUnitCount = 8,
                 Names = { "Lign", "Iron Chronicles Shiny", "Ignis Crimson", "King Biku", "King Biku Shiny", "Sandy Bag" },
             },
             Z12 = {
@@ -339,48 +333,44 @@ local CONFIG = {
                 
             }
         },
-        ActionTimeout = 5,
+        ActionTimeout = math.huge,
         TeleportDelay = 0.15,
         TeleportHeight = 3,
         EquipSlotDelay = 0.2,
         PlacementKeyHold = 0.05,
         PlacementDelay = 0.4,
-        PlacementMaxAttempts = 4, -- Recheck occupancy and reselect the hotbar unit before retrying.
         PlacementRetryDelay = 0.35,
         BestEquipDelay = 1.5,
         UISettleTime = 0.75,
+        InventorySettleTime = 0.2, -- Required Units inventory/hotbar confirmation only.
         DisplayRemoveDelay = 0.05,
-        InventoryClickDelay = 0.2,
-        HotbarClearDelay = 0.5,
+        InventoryClickDelay = 0.05,
+        HotbarClearDelay = 0.1,
         RemovalMinimumHold = 0.1,
         RemovalHoldPadding = 0.15,
-        RemovalMaxAttempts = 4, -- Recheck the slot before every retry.
         RemovalRetryDelay = 0.35,
         PlacementMinimumHold = 0.05,
         HotbarKeys = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine" },
     },
     Mutation = {
         Priority = { "None", "Bronze", "Diamond", "Platinum", "Rainbow", "Frozen", "Inferno", "Nightmare", "Unreal" },
-        -- Mutate Units latches for that run; Master displays current matching required holders.
-        -- Override bypasses rolling/Density/full Damage quotas; every required holder must still be Diamond+.
-        -- Configured Inferno/Nightmare/Unreal quotas disable the override; those quotas must be met.
-        HighTierOverride = { Enabled = true, Mutations = { "Inferno", "Nightmare", "Unreal" } },
+
         TeleportDelay = 0.25,
         TeleportHeight = 3,
         PanelSettleTime = 0.3,
         RollSettleTime = 0.25,
-        RapidRollSettleTime = 0.1, -- mutation.luau: read Current.Word after each roll.
-        RapidRollDelay = 0.1, -- mutation.luau: delay between unsuccessful rolls.
-        AfterUpgradeClickDelay = 0.3, -- Let the unit screen load after clicking UpgradeClick.
-        BeforeExitDelay = 0.2, -- Extra fixed pause before Exit; no result confirmation.
+        RapidRollSettleTime = 0.1,
+        RapidRollDelay = 0.1,
+        AfterUpgradeClickDelay = 0.3,
+        BeforeExitDelay = 0.2,
         RescanSettleTime = 0.2,
         RollDelay = 0.1,
     },
     UI = {
-        InitialTab = "master", -- master / sell / pickaxe / upgrades / upgradingOldUnit / units / mutation / upgradingUnit / cycleEnd.
-        Width = 620, Height = 620, -- Space for General Stages / Decision Making sections on Master.
-        ExpandedScale = 0.9, -- Shrink the expanded window by 10% after fitting it to the screen.
-        MinimizedWidth = 360, MinimizedHeight = 184,
+        InitialTab = "master",
+        Width = 620, Height = 620,
+        ExpandedScale = 0.9,
+        MinimizedWidth = 360, MinimizedHeight = 216,
         Colors = {
             bg = Color3.fromRGB(22, 25, 34), surface = Color3.fromRGB(31, 35, 47),
             muted = Color3.fromRGB(164, 174, 196), text = Color3.fromRGB(235, 240, 250),
@@ -389,387 +379,13 @@ local CONFIG = {
         },
     },
     Logging = {
-        ShowInfo = true, -- Summaries, changed skip reasons, and user stops; no per-row or Master announcements.
-        ShowWarnings = true, -- Errors are always logged.
-        ShowUnitUpgradeDetails = false, -- Optional zone, preparation, mutation, and stage diagnostics; upgrade summaries still print.
+        ShowInfo = true,
+        ShowWarnings = true,
+        ShowUnitUpgradeDetails = false,
+        RetryReportAttempts = 10,
+        RetryReportSeconds = 15,
     },
 }
-
---[[
-MY ANIME FARM - SCRIPT FLOW
-
-MAINTENANCE: Update this explanation in the SAME change whenever the stage order,
-final actions, zone caching, unit selection/placement, mutation requirements, or
-upgrade rules change. Keep examples and related UI descriptions in sync as well.
-
-MASTER CYCLE (default CONFIG.Flow.Order)
-PART 1 - GENERAL STAGES
-Sell -> Pickaxe -> Upgrades -> Upgrade Old Units
--------------------- DECISION MAKING --------------------
-PART 2 - Required Units -> Mutate Units -> [conditional Equip Best] -> Upgrade Units
-     -> Equip Best AGAIN at cycle end -> Select Current Zone -> Select Next Zone
-     -> wait CONFIG.Flow.CycleDelay (default: 30 seconds) -> repeat while ON.
-Master groups the stages under General Stages and Decision Making, with a visible
-divider before Required Units. The tab bar marks the same boundary.
-Master shows the cached zone number, name, and last confirmed density level.
-Master shows current/required progress for the cached zone: combined unit
-availability, the remaining Diamond+ requirement, and configured higher mutation
-quotas. Diamond target = RequiredUnitCount minus the sum of configured quotas;
-allocate distinct units to those quotas highest tier first, then count only unused
-Diamond-or-higher units toward the remaining Diamond target. During an eligible
-override, reserve ONE whitelisted trigger unit and count other Diamond+ units
-against RequiredUnitCount minus one. Each displayed fraction is capped at its
-target; higher tiers can fill the Diamond remainder. Mutation
-progress uses ONLY the first required holders whose displayed CharName matches
-the cached zone's Names whitelist, including case and Shiny. Unrelated/missing
-names never contribute to Diamond+, higher quotas, or the displayed override;
-extra holders cannot replace excluded units. Unknown counts show --.
-Hide higher mutation quotas set to zero; disabled mutation requirements show no
-quota fractions. A separate Override line shows its current status, including
-whether it is triggered but still waiting for all required holders to be Diamond+.
-Progress updates from unit checks, displayed labels, Equip Best, and mutation rolls;
-opening Master only renders cached progress and never opens another game panel.
-The eight stage switches on Master control which stages run in its cycle.
-OFF stages are skipped; standalone Run buttons still run their stage once.
-CONFIG.Flow.DefaultMasterEnabled and DefaultStages supply first-run defaults.
-Saved preferences take precedence, with missing settings using CONFIG defaults.
-Master, stage switches, both independent zone-selection toggles, Delete other
-plots (default ON), and the Unlimited best pickaxe toggle are saved in
-my_anime_farm_preferences_<gameId>_<userId>.json in the executor workspace.
-Valid older preference files receive missing toggle fields when loaded.
-The file is separate from pickaxe counts. Changes save immediately; saved Master
-ON automatically starts after initialization. Stop saves Master OFF; unloading
-or replacing the UI preserves the last preference for the next script run.
-Unreadable/invalid files fall back to defaults with a warning. Missing filesystem
-APIs or failed writes warn that changes cannot be retained across script runs.
-Delete other plots runs independently of Master, starting after initialization.
-It waits for a numbered MinePlot with your OwnerUserId before deleting other
-MinePlot<num> children of workspace.MineWorld.Plots, including their descendants.
-It rescans once per second while ON for late-loading or recreated plots.
-The same toggle clears the children of workspace.WeatherFX_Local once per second,
-even while waiting for your plot. It keeps the weather folder to avoid triggering
-its immediate recreation, and reacquires it each scan if the game replaces it.
-OFF stops further deletion; rejoin to restore plots already removed locally.
-CONFIG.Flow.Order controls the seven stages. Zone selection stays at the end;
-Equip Best can also run before unit upgrades when EVERY exact required slot
-M1-M<RequiredUnitCount> contains a whitelisted unit already at the zone cap.
-Mutations and density do not gate this request. The separate cycle-end request
-still runs.
-
-1. SELL
-   In the normal cycle, collect the chest while Sell is active, sell the selected inventory, then return to your plot.
-   The separate tutorial opens the chest through its proximity prompt and uses
-   the same MineTakeChest collection request. Chest errors release held inputs
-   and retry a freshly acquired prompt; Stop/unload cancels these retries.
-   Select All and Sell each fire one button signal. Stopping invalidates this run,
-   closes SellFrame, and prevents delayed Sell work from joining a later run.
-
-2. PICKAXE
-   Open and refresh the pickaxe shop EVERY pass; do not reuse a first-open cache.
-   Reacquire its current frame/List after opening in case the UI was rebuilt.
-   Wait for tiles to load, close the refreshed shop, then scan stable tile colors.
-   Check the highest unlocked pickaxe and buy only when its button is green,
-   respecting saved purchase limits for that ID. The Master toggle Unlimited
-   best pickaxe defaults OFF; ON bypasses the limit for this highest unlocked ID
-   only, while still saving every request count. Red/locked tiles still cannot
-   be bought, and each pass still sends at most one purchase. A capped older ID cannot block
-   a higher newly unlocked ID. Highest red still blocks lower green purchases.
-
-3. UPGRADES / ZONE CACHE
-   While the tutorial button is visible, Master checks zone and density at this
-   step even when Upgrades is OFF, without purchasing upgrades or enabling zone
-   selection. Hide the tutorial button at Z2+, or at Z1 with density 1+.
-   Once hidden, OFF skips this visibility check on later cycles.
-   Detect the current zone once, on the first zone-dependent stage, and cache
-   its ID, folder name, and confirmed density for this cycle. Every later stage
-   reuses that zone; only the next cycle detects again, after end-of-cycle zone
-   selection. Upgrades updates cached density while purchasing; later stages
-   read its final value without reopening the panel. With Upgrades skipped,
-   the initial confirmed density is used. Standalone runs get their own cache.
-   If this confirmed zone differs from the sequence's
-   previous zone, reset its cooldown, clear stale unit-count/preparation data,
-   and refresh the cooldown display. The same zone keeps its existing timer.
-   Use the original purchase loop: send requests while the node is available,
-   waiting RequestDelay between them, up to MaxRequestsPerNodePerCycle.
-   A node can have multiple levels; do not require it to turn green after each
-   request. Recheck live density after each processed node within Upgrades and
-   save the confirmed value for later stages. Sending Density II requests never
-   sets its stop flag.
-   Always prioritize the next red/available Density node when its gates pass.
-   Before density is maxed, other red nodes qualify if ABOVE the next Density
-   node OR on its SAME HORIZONTAL ROW (matching Y.Scale within
-   CONFIG.Upgrades.RowScaleTolerance). This includes density 0, using Density I.
-   Closest X.Scale distance still orders eligible nodes, then uppermost position.
-   Sharing X alone does not qualify a node below that row. Recheck Density after each node.
-   Read Node_Colossus.Content.Pips regardless of node color. A positive count up
-   to its displayed maximum ends Upgrades, turns Master stages 3-7 OFF, and
-   enables Unlimited Best Pickaxe. Save those toggles to the preferences file.
-   At max density, all other red nodes qualify. Repeat while purchases are
-   confirmed. Every Density II selection AND individual purchase checks live exact
-   M1-M<RequiredUnitCount>: all slots occupied by current-zone Names, all Diamond+,
-   and enabled mutation quotas met. Extra holders/hotbar copies never substitute.
-   A currently whitelisted required-slot high-tier override may bypass higher quotas
-   using the same configuration as rolling; it NEVER bypasses Diamond+.
-   No saved count or latched override authorizes Density. Missing/unreadable labels
-   block purchases and print the reason. RequiredUnitCount=0 has no slot requirement.
-   Close the panel without selecting a different zone yet.
-   Keep the selected zone ID for the cycle, but every getDensity call reopens
-   Upgrades if needed, reacquires that zone from Canvas, scans stable node states,
-   and replaces cached density. Close the panel again if this recheck opened it.
-   Confirmed density below 2 clears old executor-persisted Density II stop flags;
-   missing/unreadable data errors instead of reusing stale density.
-   Clear the cache for each new cycle/run. A standalone stage first detects its zone.
-
-4. UPGRADE OLD UNITS
-   Runs immediately after Upgrades, before Required Units can remove/replace old units.
-   Requires cached CURRENT-zone density exactly 0; density 1+ skips this stage.
-   Use the cached current zone ZN and ONLY the immediately previous zone Z(N-1).
-   Match displayed units against that previous zone's configured Names list by
-   reading holder.Pad.CrewInfo.BG.CharName.Text (trim spaces/remove rich text).
-   Upgrade EVERY matching displayed unit, regardless of holder number or count.
-   Skip current-zone-only names, older-zone-only names, and all other names.
-   Recheck each matched unit's name before EVERY upgrade request; stop if it changes.
-   Z1, an absent/empty previous Names list, or no matches skips this stage.
-   This stage does not require current-cycle Required Units prep or mutation quotas.
-   Target CONFIG.UpgradingOldUnit.TargetLevel (default: 70) for every match,
-   independently of current/previous zone MaxLevelCap. Upgrade DAMAGE ONLY:
-   lowest level first, in batches of up to five. Open Stats and send Damage only
-   while Damage.UpgradeButton.Content is green; stop below target if it is not green.
-   Wait for a level/color response after each request. Send no Speed/MineSpeed.
-   Names are filtered; no inventory/equip/roll is done.
-
-5. REQUIRED UNITS / HOTBAR / SCENARIO SELECTION
-   Check CONFIG.Units.SequenceCooldown first (default: 5 minutes).
-   While it is active, skip Required Units without sending any request:
-   no displayed-unit removal, hotbar clearing, inventory, or matched-count check.
-   When ready, start the timer and keep displayed units working during PASS 1:
-   clear hotbar -> open inventory -> refill hotbar -> close it -> read matches.
-   Count matching hotbar copies PLUS one per occupied matching displayed holder,
-   using holder.Pad.CrewInfo.BG.CharName.Text. All displayed holders can contribute
-   to this availability count; mutation quotas still use only the first required holders.
-   If the combined count is below RequiredUnitCount (or zero), leave every displayed
-   unit in place and skip Mutate Units. Best mode and density 0 also preserve them.
-   Upgrade Units uses live required-slot/mutation checks for its permitted attempt, independent of density.
-   Only after that check passes, remove displayed units ONCE and run PASS 2:
-   clear hotbar -> open inventory -> refill hotbar again -> close it -> recount.
-   Place the matching units from this FINAL hotbar into the first unlocked slots.
-   Retry each placement up to PlacementMaxAttempts, waiting PlacementRetryDelay
-   between attempts. Recheck Pick Up before retrying and reselect the hotbar unit;
-   late placement confirmation succeeds without activating an occupied holder.
-   Recheck the final hotbar count; successful placement authorizes Mutate Units.
-   Upgrade Units does not require this placement result or saved availability count.
-   It checks every exact required slot live for whitelist and mutation eligibility.
-   The preliminary combined count never substitutes for the final placement check
-   or counts removed units twice.
-   Required Units never requests Equip Best; the cycle controller handles it once.
-   The shared cooldown covers both passes, including insufficient counts/errors.
-   Stopping/restarting Master keeps the timer; Reset Cooldown clears it.
-   Upgrades detecting a different zone also clears it, so the new zone can be
-   checked immediately. Cycle-end selection requests alone do not reset it.
-   At cached density 2+, check EACH candidate's Content.ItemName attribute
-   _AnimTag immediately before clicking. Skip nil or empty string; accept any
-   other value, including 0 or false. Continue to later rows for up to nine clicks.
-   BOTH passes click ONLY units whose trimmed Content.ItemName.Text exactly
-   matches the cached zone's Names whitelist, including case and Shiny.
-   Rank matching rows by Content.Damage highest first across all whitelist names;
-   prefer _AnimTag on damage ties, then inventory order. Scan all rows before up to nine clicks.
-   Damage supports compound illion suffixes and scientific notation without overflow.
-   Unreadable damage is skipped and counted in the selection summary.
-   Density 2+ still requires _AnimTag. Empty Names selects nothing.
-   Inventory/hotbar counts ignore commas: "x1,416" is 1416 copies.
-   Read the hotbar, then place matching units in hotbar slot order 1-9,
-   finishing each stack's copies before advancing to the next hotbar slot.
-   Fill the LOWEST-numbered unlocked empty holder first, then work forward.
-   Only HolderPrompt.ActionText == "Place" is empty; "Pick up" confirms occupied.
-   Example: with M1-M8 unlocked, placement starts M1, M2, M3, M4, then M5-M8.
-
-6. MUTATE UNITS / REQUIRED MUTATION COUNTING
-   Required holders are the FIRST RequiredUnitCount UNLOCKED holders, lowest first.
-   Example: 8 unlocked holders and RequiredUnitCount=4 means ONLY M1, M2, M3, M4.
-   Other holders never contribute to quotas and are never rolled by this stage.
-   Enabled=true: every required holder needs Diamond or higher, including quota
-   units. Platinum=2 and RequiredUnitCount=4 means two Platinum-or-higher units plus
-   two more Diamond-or-higher units within those four required holders.
-   Higher tiers can fill lower quotas; each quota unit is counted once. Quota
-   totals must fit RequiredUnitCount. Enabled=false removes mutation requirements
-   and skips rolling entirely. Missing required units do not get replaced by extras.
-   Rolling needs successful Required Units preparation in this same cycle.
-   Roll the lowest mutation within the required holders until the applicable
-   targets are met or funds run out. Equal mutation tiers prefer the lowest slot.
-   RollButton.Content.BackgroundColor3 permits rolling when green (38, 148, 84)
-   or orange (249, 90, 16); other colors stop rolling.
-   The configured high-tier override can bypass rolling quotas, except when
-   Inferno/Nightmare/Unreal quotas are configured. Every required holder
-   must still be occupied and Diamond or higher. Master shows current whitelisted
-   required-slot override status; full Damage uses the same high-tier quota exclusion.
-   Stop rolling only when this cycle's confirmed cached density is 2+.
-   Sending a Density II request alone never stops mutation. Use the cycle cache
-   rather than reopening Canvas or trusting an old executor Density II flag.
-   Confirmed density 0-1 clears that flag so rolling can resume under normal rules.
-   This stops ROLLING ONLY: full Damage uses live required-slot/mutation eligibility, independent of density.
-
-7. UPGRADE UNITS
-   Shares CONFIG.Units.SequenceCooldown (default: 5 minutes) with Required Units.
-   Starting the Required Units match check opens ONE Upgrade Units attempt for
-   that cycle, even if count/placement/mutation conditions fail or are skipped.
-   Later cycles during cooldown skip upgrades. Standalone Upgrade Units can start
-   the same timer when ready. Reset Cooldown or a confirmed zone change clears it.
-   No same-cycle successful preparation or saved availability count is needed.
-   Upgrade Old Units remains independent of this cooldown.
-   Full Damage eligibility replaces the density-2+ condition, at ANY density:
-   RequiredUnitCount must be positive, and EVERY exact holder M1 through
-   M<RequiredUnitCount> must contain a displayed unit from this zone's Names.
-   Every one must be Diamond or higher. When RequiredMutations.Enabled=true,
-   its higher quotas must also be met; higher tiers satisfy lower quotas, with
-   no unit counted twice. A high-tier required unit can override lower quotas only when
-   no Inferno/Nightmare/Unreal quotas are configured. EVERY required unit must still
-   be Diamond+. Enabled=false skips higher quotas only.
-   If the gate fails, scan ALL displayed holders for this zone's exact Names
-   and send Damage only up to level 10. No matching name means no Damage requests.
-   BEFORE Damage attempts, early Equip Best uses a SEPARATE check: every exact
-   M1-M<RequiredUnitCount> must contain a displayed whitelisted unit at MaxLevelCap.
-   No Diamond minimum, mutation quota, override, or density condition applies.
-   Missing/empty/nonmatching slots fail; extras cannot replace them. A positive
-   RequiredUnitCount is needed. Request Equip Best and wait BestEquipDelay when
-   this check passes. The stage's shared cooldown still applies.
-   Rescan the equipped lineup before upgrading. Early Equip Best does NOT bypass
-   the full Damage mutation gate: if the pre-equip lineup failed that gate, the
-   rescanned lineup gets the whitelist level-10 fallback for this attempt.
-   If the pre-equip lineup passed full Damage eligibility, new whitelisted
-   required units still get priority; the confirmed eligible/maxed pre-equip
-   core permits processing extras even if no matching required units remain.
-   Nonmatching required-slot units are still excluded. This early request NEVER
-   replaces the cycle-end Equip Best request.
-   Upgrade core Damage to the zone's MaxLevelCap first. At MinimumDamageLevel+,
-   catch up all eligible displayed Speed/MineSpeed before the next Damage round.
-   Both stats target current Damage, limited by their own maximum. An unavailable
-   catch-up upgrade blocks further Damage; required units still precede extras.
-   After upgrading, reread ALL selected core
-   units: each must still have its matching name and show the cap before extras
-   unlock. Without early Equip Best, recheck the entire eligibility gate too.
-   Scan OUTSIDE exact M1-M<RequiredUnitCount> for ANY displayed units below
-   MaxLevelCap. Upgrade extra Damage to the cap. Extras already at cap skip Damage.
-   Never promote failed requests into a confirmed core/extra cap.
-   Every Damage pass chooses the lowest level, lower slot on ties. Upgrade Units
-   uses batches up to FIVE below MinimumDamageLevel, stopping at that threshold,
-   then up to FIVE levels per unit per round. Finish the shared batch before
-   starting a higher batch; catch up eligible Speed/MineSpeed between batches.
-   Upgrade Old Units keeps its existing Damage-only batches of FIVE.
-   Teleport/open Stats using the same sequence as Speed/MineSpeed.
-   Read StatsPanel.Scroll.Damage.LevelTitle and Damage.UpgradeButton.Content.
-   Send Damage ONLY while Content.BackgroundColor3 is green and below the target.
-   Confirm EVERY request and update its cached level after a level increase or
-   non-green color response; never count an unconfirmed request as a level.
-   Any non-green color stops that unit for this pass, even below the target;
-   a green request with no level/color response stops with an error. Bound requests
-   by starting levels, verify names while focused, and close the menu between batches.
-   After closing, allow the panel to settle and wait up to ActionTimeout for world
-   controls/name to recover. A disabled UpgradeClick alone does not mean removal
-   when HolderPrompt still says Pick Up. Wait for UpgradeClick before reopening Stats;
-   actual name changes/removal still stop requests, and an empty slot times out.
-   Incomplete required units still lock extras. Print one final stage summary
-   after all eligible Damage/Speed/MineSpeed attempts; no per-pass unit prints.
-   Cache displayed Damage/Speed/MineSpeed once after any early Equip Best.
-   Choose units/levels from that cache; update the purchased stat on confirmation.
-   Live names, buttons and responses still guard purchases; fresh stage attempts
-   rebuild the cache. Damage purchases also refresh newly unlocked stat maxima.
-   Between Damage batches and AFTER Damage attempts, use cached holders
-   at CONFIG.Units.StatUpgrade.MinimumDamageLevel or higher,
-   regardless of name, required/extra scope, density, or confirmed Damage cap.
-   This pass still runs if no core matches or extras remain locked; cooldown skips it.
-   For each eligible unit, teleport above its UpgradePart, click UpgradeClick,
-   and select Tabs.StatsTab (using Content.Row.Label to locate its button).
-   Read StatsPanel.Scroll.Speed/Mining.LevelTitle and UpgradeButton.Content.
-   Balance Speed/MineSpeed across eligible holders in batches of up to FIVE
-   levels per stat per unit. Finish the shared catch-up batch across all
-   eligible stats before starting the next batch; confirm every purchase.
-   A stat already at its Damage target or own maximum needs no further purchase.
-   Send Speed/MineSpeed only while that stat's Content.BackgroundColor3 is green.
-   Read the selected button color before each request and confirm that stat's
-   level/color response, updating its cache instead of rescanning every unit;
-   no fixed request count. ANY non-green color means that stat is unavailable.
-   Close Stats between holders. If a lower unfinished stat is unavailable, stop
-   the catch-up pass and keep Damage blocked. A missing response to a green-button
-   request stops with an error.
-   Menu timing, the green color, and the threshold use CONFIG.Units.StatUpgrade.
-   Both unit-upgrade stages wait CONFIG.Units.UpgradeRequestDelays[stat] after
-   each request; both Damage and Speed/MineSpeed wait for the panel to settle.
-   Request/menu/panel/transition waits default to 0.05 seconds; response/control
-   checks poll every 0.05 seconds and may wait longer until the game is ready.
-
-MASTER-TAB HOTBAR UPGRADES (standalone; not part of the Master cycle)
-   Refresh rereads hotbar slots 1-9; the dropdown permits multiple selections.
-   Run snapshots each selected slot/name/count and finishes its stack before the next.
-   Use M1 only: pick up its existing unit, place one selected copy, open Stats,
-   max Speed/Mining, then raise Damage to CONFIG.HotbarUpgrade.DamageTargetLevel
-   (default 130), catching up newly unlocked Speed/Mining maxima after each level.
-   Confirm every request, Exit, pick up the completed copy into inventory, then
-   reread the source slot before repeating. Empty stacks advance to the next selection;
-   a different name or a stack that does not decrease stops the batch. Never exceed
-   the starting copy count. Pickup, placement, Stats and level progress wait without time limits.
-   Unavailable purchases wait until ready; Stop/unload still cancels every wait.
-   Run becomes Stop while active; the shared controller excludes other stage workers.
-   Placement follows peter_script: move above M1 Pad, wait 0.35s, hold the number
-   key 0.05s, wait 0.3s, hold HolderPrompt, then wait 0.6s. Confirm M1 is occupied
-   AND the selected hotbar stack supplied a copy before opening Stats. Bind the stable
-   displayed M1 name after that confirmation; ItemName and CharName need not match.
-   Keep checking that bound M1 name during upgrades and pickup, and the original
-   selected hotbar name before each new copy. Tolerate transient stale/empty labels
-   without sending purchases; normalize rich text, repeated/nonbreaking spaces.
-   Hotbar entries must settle too. Identity mismatches wait without sending purchases.
-   M1 is approached before checking its prompt. Normalize Place/Place Unit and
-   Pick up/Pickup variants; use live unit controls for an occupied holder and
-   inactive controls for an empty holder awaiting a selected unit. Wait for stale
-   prompt text to settle. Only a persistent explicit Unlock/Locked prompt is a lock;
-   unknown text reports its actual ActionText instead of a false locked-slot error.
-   These identity waits apply only to this standalone batch, not other upgrade stages.
-   This standalone action stops Master/Enchant Roll and ignores zone rules/cooldowns.
-
-8. CYCLE END / REPEAT / STOP
-   Request Equip Best and wait at cycle end EVEN IF the early request ran.
-   Then apply Select Current Zone and Select Next Zone using the cached zone.
-   Zone selection requires Upgrades to have completed. Guard duplicate cycle-end
-   finalization calls separately; an early request never marks the end request done.
-   Wait CONFIG.Flow.CycleDelay (default: 30 seconds), then start a fresh zone cache.
-   A stage error skips the remaining stages; finalization is still attempted,
-   and Master retries next cycle while ON. Skips return normally to the flow.
-   Turning Master ON or starting Hotbar Upgrades immediately enables noclip/flight
-   in the button handler, before deferred work or preference writes. Noclip disables
-   character collisions and flight counters
-   gravity so placement teleports stay in proximity range. WASD flies relative to
-   the camera; Space rises and Left Ctrl descends. No input hovers. Text entry,
-   lost window focus, and held placement keys/prompts suppress flight movement.
-   Flight follows teleports and reattaches after respawn. Master OFF and Hotbar
-   Upgrades Stop immediately remove movement in the button handler. Completion, an aborted
-   run, unload/close, or replacement by a new script disconnects the movement
-   listeners, destroys flight constraints/attachments, restores each original
-   collision flag and Humanoid setting, and clears movement state. Standalone
-   actions other than Hotbar Upgrades never enable movement. Speed: General.MasterFlySpeed.
-   Stop/unload cancels the worker and releases held inputs.
-   Standalone Upgrades applies its zone toggles after its single stage finishes.
-   Console messages use [Stage # - Stage Name], numbered by CONFIG.Flow.Order.
-   Stage names are padded to the longest label so brackets/messages line up.
-   Master stage/cycle start/end announcements are silent; stage results and
-   errors still print. Messages outside a stage keep their context label.
-   Inventory skips use one count summary; mutation slots share one report line.
-   Unchanged skip reasons stay silent until a stage runs or its reason changes;
-   live cooldown values remain on the UI. Zone traces are optional diagnostics.
-   Upgrade request totals per unit and errors remain visible.
-]]
-
--- My Anime Farm: one browser-style window, seven actions, one ordered master flow.
--- Run on the client in the SAME executor environment as the original scripts.
--- See the SCRIPT FLOW guide immediately after CONFIG for the complete sequence and stage requirements.
--- A skipped/unaffordable/capped pickaxe continues; Master retries a failed cycle while ON.
--- Stop invalidates the current run before canceling its worker and releasing inputs.
--- Every stage wait/request checks that run; old workers cannot join a later run.
--- Already-sent game requests cannot be undone.
--- X unloads; rerunning replaces this window and cancels its previous worker.
--- Requires firesignal (Upgrades/Required Units), VirtualInputManager, and executor
--- isfile/readfile/writefile (pickaxe counts and toggle preferences). Optional: getconnections.
--- Mutate Units and both unit-upgrade stages also require fireclickdetector.
--- Keeps the original pickaxe_counts_<gameId>_<userId>.json.
--- All editable settings are in CONFIG above.
 
 local LOAD_TIMEOUT = CONFIG.General.LoadTimeout
 local SETTLE_TIME = CONFIG.General.SettleTime
@@ -781,28 +397,28 @@ local GuiService = game:GetService("GuiService")
 local VIM = game:GetService("VirtualInputManager")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local player = Players.LocalPlayer
-if not player then
-    assert(game:GetService("RunService"):IsClient(), "Run this script on the client.")
-    repeat
-        Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
-        player = Players.LocalPlayer
-    until player
+while not player do
+    task.wait(CONFIG.General.ScanPoll)
+    player = Players.LocalPlayer
 end
-local playerGui = player:WaitForChild("PlayerGui", LOAD_TIMEOUT)
-assert(playerGui, "PlayerGui is missing.")
+local playerGui = player:FindFirstChildOfClass("PlayerGui")
+while not playerGui do
+    task.wait(CONFIG.General.ScanPoll)
+    playerGui = player:FindFirstChildOfClass("PlayerGui")
+end
 
-for _, key in ipairs({"__MY_ANIME_FARM_KILL", "__AUTO_SELL_KILL"}) do
+for _, key in ipairs({"__AUTOMATION_KILL", "__AUTO_SELL_KILL"}) do
     if type(_G[key]) == "function" then pcall(_G[key]) end
 end
-for _, name in ipairs({"MyAnimeFarmUI", "AutoSellUI", "PickaxeBuyerUI", "UpgradeClickerUI", "MineBestHotbarUI"}) do
+for _, name in ipairs({"AutomationUI", "AutoSellUI", "PickaxeBuyerUI", "UpgradeClickerUI", "MineBestHotbarUI", "WorkspacePathCleanupUI"}) do
     local existing = playerGui:FindFirstChild(name)
     if existing then existing:Destroy() end
 end
 
 local alive, busy = true, false
 local worker, activeStage, activeRun = nil, nil, nil
-local minimizedActions = {rollEnabled = false, rollWorker = nil, openBusy = false, openWorker = nil} -- Session only; never saved.
-local runScope = {current = nil, threads = setmetatable({}, {__mode = "k"})}
+local minimizedActions = {rollEnabled = false, rollWorker = nil, openBusy = false, openWorker = nil}
+local runScope = {current = nil, threads = setmetatable({}, {__mode = "k"}), background = {}}
 local connections, shownPrompts = {}, {}
 local heldPrompt, heldKey, mouseHeld = nil, nil, nil
 local originalRoot, originalCFrame = nil, nil
@@ -817,9 +433,31 @@ for _, id in ipairs(order) do
 end
 local selectedTab = CONFIG.UI.InitialTab
 local lastRun = -math.huge
-local killFarm, startRun, stopRun
+local unloadScript, startRun, stopRun
 local gameEvent
 local consolePrint, consoleWarn = print, warn
+local scriptLogs = {}
+do
+    local originalPrint, originalWarn = consolePrint, consoleWarn
+    local function record(level, ...)
+        local parts = {}
+        for index = 1, select("#", ...) do
+            local value = select(index, ...)
+            parts[index] = tostring(value)
+        end
+        table.insert(scriptLogs, os.date("[%H:%M:%S] ") .. level .. " " .. table.concat(parts, "\t"))
+        -- Keep recent logs in memory without changing the preferences cache.
+        if #scriptLogs > 2000 then table.remove(scriptLogs, 1) end
+    end
+    consolePrint = function(...)
+        record("INFO", ...)
+        originalPrint(...)
+    end
+    consoleWarn = function(...)
+        record("WARN", ...)
+        originalWarn(...)
+    end
+end
 local consoleStageLabels = {
     sell = "Sell", pickaxe = "Pickaxe", upgrades = "Upgrades", upgradingOldUnit = "Upgrade Old Units",
     units = "Required Units", mutation = "Mutate Units", upgradingUnit = "Upgrade Units", cycleEnd = "Cycle end",
@@ -856,20 +494,78 @@ local function logWarning(message)
     local clean = text:gsub("^%[[^%]]+%]%s*", "")
     consoleWarn(consolePrefix(scope) .. " Warning: " .. clean)
 end
+local scriptErrors = {retries = {}, stages = {}}
+function scriptErrors.clearStage(stage)
+    scriptErrors.stages[stage] = nil
+    for monitor, source in pairs(scriptErrors.retries) do
+        if source.stage == stage then scriptErrors.retries[monitor] = nil end
+    end
+end
+function scriptErrors.clearAll()
+    table.clear(scriptErrors.retries)
+    table.clear(scriptErrors.stages)
+end
+function scriptErrors.hasAny()
+    return next(scriptErrors.retries) ~= nil or next(scriptErrors.stages) ~= nil
+end
 local function logError(scope, message)
+    -- Retry monitors own their recovery state; actual stage errors remain until recovery/restart.
+    if scope ~= "Retry" then scriptErrors.stages[activeStage or activeRun or scope or "General"] = true end
     consoleWarn(consolePrefix(scope) .. " Error: " .. tostring(message))
 end
 local function logUnitUpgradeDetail(message)
     if CONFIG.Logging.ShowUnitUpgradeDetails then logInfo("Unit Upgrade Debug", message) end
 end
--- Toggle preferences are separate from durable pickaxe purchase counts.
+
+local function newRetryMonitor(operation)
+    local started, lastReport, attempts = os.clock(), os.clock(), 0
+    local nextReport = CONFIG.Logging.RetryReportAttempts
+    local expectedRoll = tostring(operation):lower():find("rolling mutations", 1, true) ~= nil
+    local flagged, report = false, nil
+    report = function(detail, recovered)
+        if recovered then
+            scriptErrors.retries[report] = nil
+            started, lastReport, attempts = os.clock(), os.clock(), 0
+            nextReport, flagged = CONFIG.Logging.RetryReportAttempts, false
+            return
+        end
+        attempts = attempts + 1
+        local now = os.clock()
+        if attempts >= nextReport and now - lastReport >= CONFIG.Logging.RetryReportSeconds then
+            flagged = not expectedRoll
+            logError("Retry", string.format("%s | %d failed checks/retries over %.1fs; still retrying.%s",
+                operation, attempts, now - started, detail and (" Last issue: " .. tostring(detail)) or ""))
+            nextReport = attempts + CONFIG.Logging.RetryReportAttempts
+            lastReport = now
+        end
+        if flagged then scriptErrors.retries[report] = {stage = activeStage, run = activeRun} end
+    end
+    return report
+end
+
+local function hasMutationRequirements(rule)
+    for _, tier in ipairs(CONFIG.Mutation.Priority) do
+        local count = rule and rule[tier]
+        if type(count) == "number" and count > 0 then return true end
+    end
+    return false
+end
+
 local preferences = {
     masterEnabled = CONFIG.Flow.DefaultMasterEnabled,
+    masterActivatedOnce = false,
     tutorialHidden = false,
+    firstLoadedAt = scriptLoadedAt,
+    discordNotifications = {maxZone = {}, colossus = {}},
+    dailySpinEnabled = CONFIG.DailyRewards.DefaultSpinEnabled,
+    autoRedeemEnabled = CONFIG.DailyRewards.DefaultRedeemEnabled,
+    lastDailySpinAt = nil,
+    redeemedCodes = {},
     stages = {},
 }
 assert(type(preferences.masterEnabled) == "boolean", "CONFIG.Flow.DefaultMasterEnabled must be boolean.")
 assert(type(CONFIG.General.DeleteOtherPlots) == "boolean", "CONFIG.General.DeleteOtherPlots must be boolean.")
+assert(type(CONFIG.General.WorkspaceCleanupEnabled) == "boolean", "CONFIG.General.WorkspaceCleanupEnabled must be boolean.")
 for _, id in ipairs(order) do
     local enabled = CONFIG.Flow.DefaultStages[id]
     assert(type(enabled) == "boolean", "CONFIG.Flow.DefaultStages." .. id .. " must be boolean.")
@@ -877,10 +573,10 @@ for _, id in ipairs(order) do
 end
 local savePreferences
 do
-    local file = string.format("my_anime_farm_preferences_%s_%s.json", tostring(game.GameId), tostring(player.UserId))
+    local file = string.format("automation_preferences_%s_%s.json", tostring(game.GameId), tostring(player.UserId))
     local storageAvailable = type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function"
     local function storageWarning(message)
-        -- Persistence failures must remain visible even when routine warnings are disabled.
+
         consoleWarn("[Preferences] " .. message)
     end
     savePreferences = function()
@@ -892,12 +588,20 @@ do
             version = 1,
             gameId = tostring(game.GameId), userId = tostring(player.UserId),
             masterEnabled = preferences.masterEnabled,
+            masterActivatedOnce = preferences.masterActivatedOnce,
             tutorialHidden = preferences.tutorialHidden,
+            firstLoadedAt = preferences.firstLoadedAt,
+            discordNotifications = preferences.discordNotifications,
+            dailySpinEnabled = preferences.dailySpinEnabled,
+            autoRedeemEnabled = preferences.autoRedeemEnabled,
+            lastDailySpinAt = preferences.lastDailySpinAt,
+            redeemedCodes = preferences.redeemedCodes,
             stages = preferences.stages,
             selectCurrentZone = CONFIG.Upgrades.SelectCurrentZone,
             selectNextZone = CONFIG.Upgrades.SelectNextZone,
             unlimitedBestPickaxe = CONFIG.Pickaxe.UnlimitedBestPickaxe,
             deleteOtherPlots = CONFIG.General.DeleteOtherPlots,
+            workspaceCleanupEnabled = CONFIG.General.WorkspaceCleanupEnabled,
         }
         local encodedOK, encoded = pcall(HttpService.JSONEncode, HttpService, data)
         if not encodedOK then storageWarning("Cannot encode preferences; changes were not saved."); return false end
@@ -932,7 +636,36 @@ do
             return fallback
         end
         preferences.masterEnabled = booleanOrDefault(data.masterEnabled, preferences.masterEnabled)
+        preferences.masterActivatedOnce = booleanOrDefault(data.masterActivatedOnce, false)
         preferences.tutorialHidden = booleanOrDefault(data.tutorialHidden, false)
+        preferences.dailySpinEnabled = booleanOrDefault(data.dailySpinEnabled, preferences.dailySpinEnabled)
+        preferences.autoRedeemEnabled = booleanOrDefault(data.autoRedeemEnabled, preferences.autoRedeemEnabled)
+        local savedSpinAt = data.lastDailySpinAt
+        if type(savedSpinAt) == "number" and savedSpinAt > 0 and savedSpinAt < math.huge
+            and savedSpinAt == math.floor(savedSpinAt) then
+            preferences.lastDailySpinAt = savedSpinAt
+        end
+        if type(data.redeemedCodes) == "table" then
+            for code, sent in pairs(data.redeemedCodes) do
+                if type(code) == "string" and sent == true then preferences.redeemedCodes[code] = true end
+            end
+        end
+        local savedFirstLoadedAt = data.firstLoadedAt
+        local validFirstLoadedAt = type(savedFirstLoadedAt) == "number" and savedFirstLoadedAt > 0
+            and savedFirstLoadedAt <= scriptLoadedAt and savedFirstLoadedAt == math.floor(savedFirstLoadedAt)
+        if validFirstLoadedAt then preferences.firstLoadedAt = savedFirstLoadedAt end
+        if type(data.discordNotifications) == "table" then
+            for kind, zones in pairs(preferences.discordNotifications) do
+                local saved = data.discordNotifications[kind]
+                if type(saved) == "table" then
+                    for zoneId, sent in pairs(saved) do
+                        if type(zoneId) == "string" and zoneId:match("^Z%d+$") and sent == true then
+                            zones[zoneId] = true
+                        end
+                    end
+                end
+            end
+        end
         if data.stages ~= nil and type(data.stages) ~= "table" then
             storageWarning("Invalid saved stages; using CONFIG stage defaults.")
         elseif data.stages then
@@ -944,9 +677,13 @@ do
         CONFIG.Upgrades.SelectNextZone = booleanOrDefault(data.selectNextZone, CONFIG.Upgrades.SelectNextZone)
         CONFIG.Pickaxe.UnlimitedBestPickaxe = booleanOrDefault(data.unlimitedBestPickaxe, CONFIG.Pickaxe.UnlimitedBestPickaxe)
         CONFIG.General.DeleteOtherPlots = booleanOrDefault(data.deleteOtherPlots, CONFIG.General.DeleteOtherPlots)
-        -- Backfill valid older files even when saved Master is OFF and no toggle is clicked.
+        CONFIG.General.WorkspaceCleanupEnabled = booleanOrDefault(data.workspaceCleanupEnabled, CONFIG.General.WorkspaceCleanupEnabled)
+
         if data.selectCurrentZone == nil or data.selectNextZone == nil or data.unlimitedBestPickaxe == nil
-            or data.deleteOtherPlots == nil or data.tutorialHidden == nil then
+            or data.deleteOtherPlots == nil or data.workspaceCleanupEnabled == nil
+            or data.tutorialHidden == nil or data.discordNotifications == nil
+            or data.dailySpinEnabled == nil or data.autoRedeemEnabled == nil or data.redeemedCodes == nil
+            or not validFirstLoadedAt then
             savePreferences()
         end
     end
@@ -956,12 +693,12 @@ end
 local lastStageSkip = {}
 local function logStageResult(id, message)
     if message:match("^Skipped:") then
-        -- A ticking cooldown is still the same skip reason, not a new event.
+
         local key = message:gsub("cooldown %d+:%d+ remaining", "cooldown active")
         if lastStageSkip[id] == key then return end
         lastStageSkip[id] = key
     else
-        lastStageSkip[id] = nil -- A real run makes the next skip worth reporting again.
+        lastStageSkip[id] = nil
     end
     logInfo(consoleStageLabels[id], message)
 end
@@ -996,35 +733,30 @@ local function pause(seconds)
     checkAlive()
 end
 
-local function waitUntil(test, timeout, message)
-    -- Shared helpers keep their deadlines except inside the selected hotbar worker.
-    local token = runScope.threads[coroutine.running()]
-    local deadline = token and token.id == "hotbarUpgrade" and math.huge or os.clock() + timeout
-    repeat
+local function waitUntil(test, _timeout, message, retryAction)
+    local reportRetry = newRetryMonitor(message or "Waiting for an operation to complete")
+    local nextRetry = os.clock() + CONFIG.General.RetryInterval
+    local problem
+    while true do
         checkAlive()
         local result = test()
-        if result then return result end
+        if result then reportRetry(nil, true); return result end
+        if retryAction and os.clock() >= nextRetry then
+            local ok, response = pcall(retryAction)
+            checkAlive()
+            problem = not ok and response or nil
+            nextRetry = os.clock() + CONFIG.General.RetryInterval
+        end
+        reportRetry(problem)
         pause(CONFIG.General.WaitPoll)
-    until os.clock() >= deadline
-    error(message, 0)
+    end
 end
 
 local function path(parent, names)
-    local token = runScope.threads[coroutine.running()]
-    if token and token.id == "hotbarUpgrade" then
-        for _, name in ipairs(names) do
-            parent = waitUntil(function() return parent:FindFirstChild(name) end, math.huge)
-        end
-        return parent
-    end
-    local deadline = os.clock() + LOAD_TIMEOUT
     for _, name in ipairs(names) do
-        checkAlive()
-        local remaining = deadline - os.clock()
-        if remaining <= 0 then error("Timed out waiting for " .. name .. ".", 0) end
-        parent = parent:WaitForChild(name, remaining)
-        checkAlive()
-        if not parent then error("Missing path component: " .. name, 0) end
+        local current = parent
+        parent = waitUntil(function() return current:FindFirstChild(name) end, nil,
+            "Waiting for path component " .. name .. " under " .. current:GetFullName())
     end
     return parent
 end
@@ -1058,7 +790,6 @@ local function restorePosition()
     end
 end
 
--- MASTER MOVEMENT: noclip and flight belong to the active Master or Hotbar Upgrades run.
 do
     local enabled, currentToken, focused = false, nil, true
     local movementConnections, created, collisions = {}, {}, {}
@@ -1088,7 +819,7 @@ do
         character, root, humanoid, savedHumanoid = nil, nil, nil, nil
     end
     local function stopMovement()
-        enabled, currentToken = false, nil -- Invalidate before disconnecting/restoring anything.
+        enabled, currentToken = false, nil
         for _, connection in ipairs(movementConnections) do connection:Disconnect() end
         table.clear(movementConnections)
         detachCharacter()
@@ -1096,7 +827,7 @@ do
     end
     local function create(class, name)
         local instance = Instance.new(class)
-        table.insert(created, instance) -- Also clean up a partially configured constraint after an error.
+        table.insert(created, instance)
         instance.Name = name
         return instance
     end
@@ -1109,21 +840,21 @@ do
         end
         if not nextRoot or not nextRoot:IsA("BasePart") or not nextHumanoid or nextHumanoid.Health <= 0 then
             detachCharacter()
-            return -- Respawns are picked up on the next simulation frame; no waiting worker survives OFF.
+            return
         end
         if not root then
             character, root, humanoid = nextCharacter, nextRoot, nextHumanoid
             savedHumanoid = {PlatformStand = humanoid.PlatformStand, AutoRotate = humanoid.AutoRotate}
-            local attachment = create("Attachment", "MAF_MasterFlightAttachment")
+            local attachment = create("Attachment", "AutomationFlightAttachment")
             attachment.Parent = root
-            velocity = create("LinearVelocity", "MAF_MasterFlightVelocity")
+            velocity = create("LinearVelocity", "AutomationFlightVelocity")
             velocity.Attachment0 = attachment
             velocity.RelativeTo = Enum.ActuatorRelativeTo.World
             velocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
             velocity.ForceLimitsEnabled = false
             velocity.VectorVelocity = Vector3.zero
             velocity.Parent = root
-            orientation = create("AlignOrientation", "MAF_MasterFlightOrientation")
+            orientation = create("AlignOrientation", "AutomationFlightOrientation")
             orientation.Attachment0 = attachment
             orientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
             orientation.RigidityEnabled = true
@@ -1131,7 +862,7 @@ do
             orientation.CFrame = root.CFrame.Rotation
             orientation.Parent = root
         end
-        -- Save each part's original collision value once, including accessories added while ON.
+
         for part, original in pairs(collisions) do
             if not part:IsDescendantOf(character) then
                 pcall(function() part.CanCollide = original end)
@@ -1161,9 +892,9 @@ do
             error("General.MasterFlySpeed must be a finite positive number.", 0)
         end
         local movement = direction.Magnitude > 0 and direction.Unit * speed or Vector3.zero
-        velocity.VectorVelocity = movement -- Zero velocity still counters gravity: stay at the teleport destination.
+        velocity.VectorVelocity = movement
         root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = movement, Vector3.zero
-        orientation.CFrame = root.CFrame.Rotation -- Follow scripted teleports; never restore a previous flight position.
+        orientation.CFrame = root.CFrame.Rotation
     end
     modules.masterMovement = {
         stop = stopMovement,
@@ -1188,21 +919,21 @@ do
                     if stopRun then stopRun() end
                 end
             end))
-            step() -- Apply before the first stage can teleport or activate a prompt.
+            step()
         end,
     }
 end
 
-
 local gui = Instance.new("ScreenGui")
-gui.Name = "MyAnimeFarmUI"
+gui.Name = "AutomationUI"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true -- Use the same 8-pixel drag margin above and below the window.
+gui.IgnoreGuiInset = true
 gui.DisplayOrder = 2147483647
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 local function cleanup(destroyGui)
     if not alive then return end
+    if modules.idleClick then modules.idleClick.stop() end
     runScope.current, minimizedActions.rollToken, minimizedActions.openToken = nil, nil, nil
     alive, busy, dragging = false, false, false
     if modules.masterMovement then modules.masterMovement.stop() end
@@ -1213,6 +944,8 @@ local function cleanup(destroyGui)
     table.clear(connections)
     if worker and worker ~= coroutine.running() then pcall(task.cancel, worker) end
     worker = nil
+    for thread in pairs(runScope.background) do pcall(task.cancel, thread) end
+    table.clear(runScope.background)
     minimizedActions.rollEnabled = false
     if minimizedActions.rollWorker then pcall(task.cancel, minimizedActions.rollWorker) end
     minimizedActions.rollWorker = nil
@@ -1220,17 +953,18 @@ local function cleanup(destroyGui)
     if minimizedActions.openWorker then pcall(task.cancel, minimizedActions.openWorker) end
     minimizedActions.openWorker = nil
     releaseInputs()
+    if modules.pickaxe and modules.pickaxe.cleanupWaiting then pcall(modules.pickaxe.cleanupWaiting) end
     if modules.tutorial then modules.tutorial.cleanup() end
     if modules.mutation and modules.mutation.cleanup then pcall(modules.mutation.cleanup) end
     local unitUpgrade = rawget(modules, "upgradingUnit")
     if unitUpgrade and unitUpgrade.cleanup then pcall(unitUpgrade.cleanup) end
     restorePosition()
     table.clear(shownPrompts)
-    if _G.__MY_ANIME_FARM_KILL == killFarm then _G.__MY_ANIME_FARM_KILL = nil end
+    if _G.__AUTOMATION_KILL == unloadScript then _G.__AUTOMATION_KILL = nil end
     if destroyGui then gui:Destroy() end
 end
-killFarm = function() cleanup(true) end
-_G.__MY_ANIME_FARM_KILL = killFarm
+unloadScript = function() cleanup(true) end
+_G.__AUTOMATION_KILL = unloadScript
 connect(gui.Destroying, function() cleanup(false) end)
 connect(ProximityPromptService.PromptShown, function(prompt) shownPrompts[prompt] = true end)
 connect(ProximityPromptService.PromptHidden, function(prompt) shownPrompts[prompt] = nil end)
@@ -1262,10 +996,13 @@ local function button(parent, text, position, size)
 end
 
 local panel = make("Frame", gui, {
-    Name = "Browser", Size = UDim2.fromOffset(CONFIG.UI.Width, CONFIG.UI.Height), Position = UDim2.new(0, 12, 0.5, 0),
-    AnchorPoint = Vector2.new(0, 0.5),
-    BackgroundColor3 = colors.bg, BorderSizePixel = 0,
+    Name = "Browser", Size = UDim2.fromOffset(CONFIG.UI.Width, CONFIG.UI.Height), Position = UDim2.fromOffset(0, 0),
+    AnchorPoint = Vector2.new(0, 0),
+    BackgroundColor3 = colors.bg, BorderSizePixel = 0, Active = true,
 })
+-- Block input behind the panel, including blank areas, in both UI sizes.
+-- Active above also supports clients without the newer InputSink property.
+pcall(function() panel.InputSink = Enum.InputSink.All end)
 corner(panel, 12)
 local minimized = false
 local scale = make("UIScale", panel, {Scale = 1})
@@ -1276,15 +1013,15 @@ local function resize()
         * (minimized and 1 or CONFIG.UI.ExpandedScale)
     local width, height = panel.Size.X.Offset * scale.Scale, panel.Size.Y.Offset * scale.Scale
     local x = panel.Position.X.Scale * screen.X + panel.Position.X.Offset
-    local top = panel.Position.Y.Scale * screen.Y + panel.Position.Y.Offset - height / 2
-    x = math.clamp(x, 8, math.max(8, screen.X - width - 8))
-    top = math.clamp(top, 8, math.max(8, screen.Y - height - 8))
-    panel.Position = UDim2.fromOffset(x, top + height / 2)
+    local top = panel.Position.Y.Scale * screen.Y + panel.Position.Y.Offset
+    x = math.clamp(x, 0, math.max(0, screen.X - width))
+    top = math.clamp(top, 0, math.max(0, screen.Y - height))
+    panel.Position = UDim2.fromOffset(x, top)
 end
 connect(gui:GetPropertyChangedSignal("AbsoluteSize"), resize)
 connect(UserInputService.WindowFocused, resize)
 
-local title = button(panel, "  My Anime Farm", UDim2.fromOffset(10, 8), UDim2.new(1, -128, 0, 36))
+local title = button(panel, "  Automation", UDim2.fromOffset(10, 8), UDim2.new(1, -128, 0, 36))
 title.BackgroundTransparency = 1
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.AutoButtonColor = false
@@ -1297,7 +1034,7 @@ minimize.Name = "Minimize"
 minimize.BackgroundTransparency = 1
 minimize.TextSize = 20
 local minimizedControls = make("Frame", panel, {
-    Name = "MinimizedControls", Position = UDim2.fromOffset(8, 34), Size = UDim2.new(1, -16, 0, 142),
+    Name = "MinimizedControls", Position = UDim2.fromOffset(8, 34), Size = UDim2.new(1, -16, 1, -42),
     BackgroundTransparency = 1, Visible = false,
 })
 local minimizedMaster = button(minimizedControls, "Master: OFF", UDim2.fromOffset(0, 0), UDim2.new(0.5, -3, 0, 40))
@@ -1308,13 +1045,24 @@ do
     tutorialButton.Name = "AutoCompleteTutorial"
     tutorialButton.TextSize = 14
     tutorialButton.TextWrapped = true
-    local tutorialStatus = label(minimizedControls, "", UDim2.fromOffset(0, 104), UDim2.new(1, 0, 0, 36), 11)
+    local tutorialStatus = label(minimizedControls, "", UDim2.fromOffset(0, 180), UDim2.new(1, 0, 0, 36), 11)
     tutorialStatus.TextWrapped = true
     pages.tutorial = {name = "Auto complete tutorial", run = tutorialButton, status = tutorialStatus, runText = "Auto complete tutorial"}
+    minimizedActions.getHeight = function()
+        return CONFIG.UI.MinimizedHeight + (tutorialStatus.Visible and 42 or 0)
+    end
     minimizedActions.refreshTutorial = function()
         tutorialButton.Visible = not preferences.tutorialHidden
         minimizedMaster.Size = UDim2.new(preferences.tutorialHidden and 1 or 0.5, preferences.tutorialHidden and 0 or -3, 0, 40)
+        tutorialStatus.Visible = not preferences.tutorialHidden and tutorialStatus.Text ~= ""
+        if minimized then
+            local height = minimizedActions.getHeight()
+
+            panel.Size = UDim2.fromOffset(CONFIG.UI.MinimizedWidth, height)
+            resize()
+        end
     end
+    connect(tutorialStatus:GetPropertyChangedSignal("Text"), minimizedActions.refreshTutorial)
     minimizedActions.hideTutorial = function(zoneId, densityLevel)
         if preferences.tutorialHidden then return end
         local zoneNumber = tonumber(tostring(zoneId):match("^Z(%d+)$"))
@@ -1349,6 +1097,7 @@ connect(title.InputBegan, function(input)
     if not alive or dragging then return end
     local kind = input.UserInputType
     if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then return end
+    if modules.idleClick then modules.idleClick.stop() end
     dragging = true
     touchPointer = kind == Enum.UserInputType.Touch and input or nil
     dragStart, panelStart = input.Position, panel.Position
@@ -1375,7 +1124,7 @@ local tabBar = make("Frame", panel, {
     Size = UDim2.new(1, -24, 0, 38), Position = UDim2.fromOffset(12, 50),
     BackgroundTransparency = 1,
 })
-local address = label(panel, "farm://master", UDim2.fromOffset(22, 98), UDim2.new(1, -44, 0, 22), 12)
+local address = label(panel, "automation://master", UDim2.fromOffset(22, 98), UDim2.new(1, -44, 0, 22), 12)
 local content = make("Frame", panel, {
     Position = UDim2.fromOffset(12, 126), Size = UDim2.new(1, -24, 1, -182),
     BackgroundColor3 = colors.surface, BorderSizePixel = 0,
@@ -1385,22 +1134,14 @@ local footer = label(panel, "Ready. Choose a tab or run the full flow.", UDim2.n
 local stop = button(panel, "Stop", UDim2.new(1, -106, 1, -44), UDim2.fromOffset(90, 32))
 stop.BackgroundColor3 = colors.idle
 
--- Start with the draggable title bar; expanding stays inside the usable UI area.
--- Presentation only; the current worker keeps running.
 do
     local function setMinimized(value)
         if not alive then return end
         endDrag()
-        local screen = gui.AbsoluteSize
-        local oldHeight = panel.Size.Y.Offset * scale.Scale
+        if modules.idleClick then modules.idleClick.stop() end
         minimized = value
         local width = minimized and CONFIG.UI.MinimizedWidth or CONFIG.UI.Width
-        local height = minimized and CONFIG.UI.MinimizedHeight or CONFIG.UI.Height
-        if screen.X > 0 and screen.Y > 0 then
-            local x = panel.Position.X.Scale * screen.X + panel.Position.X.Offset
-            local top = panel.Position.Y.Scale * screen.Y + panel.Position.Y.Offset - oldHeight / 2
-            panel.Position = UDim2.fromOffset(x, top + height * scale.Scale / 2)
-        end
+        local height = minimized and minimizedActions.getHeight() or CONFIG.UI.Height
         panel.Size = UDim2.fromOffset(width, height)
         minimize.Text = minimized and "+" or "-"
         minimizedControls.Visible = minimized
@@ -1420,9 +1161,97 @@ do
     setMinimized(true)
 end
 
+do
+    local clickArea = button(minimizedControls, "Idle click area (every 2s)", UDim2.fromOffset(0, 156), UDim2.new(1, 0, 0, 20))
+    clickArea.Name, clickArea.TextSize = "MinimizedIdleClickArea", 10
+    clickArea.BackgroundColor3, clickArea.TextColor3 = colors.surface, colors.muted
+    clickArea.AutoButtonColor, clickArea.Selectable, clickArea.Active = false, false, true
+    clickArea.ZIndex = 5
+    pcall(function() clickArea.InputSink = Enum.InputSink.All end)
+    -- Intentionally no action handler: this area only receives the idle clicks.
+    local nextClickAt, pressedPoint, releaseAt, pressedSuccessfully
+    local errorColor = Color3.fromRGB(165, 67, 79)
+    local reportClickFailure = newRetryMonitor("Clicking the minimized UI idle area")
+    local function clickPoint()
+        if not alive or not minimized or not preferences.masterEnabled or dragging
+            or (modules.pickaxe and modules.pickaxe.isWaiting and modules.pickaxe.isWaiting())
+            or not gui.Parent or not gui.Enabled or not panel.Visible
+            or not minimizedControls.Visible or not clickArea.Visible or GuiService.MenuIsOpen then return nil end
+        if not clickArea:IsDescendantOf(panel) then return nil end
+        local camera = workspace.CurrentCamera
+        if not camera then return nil end
+        local inset = GuiService:GetGuiInset()
+        local areaPosition, areaSize = clickArea.AbsolutePosition, clickArea.AbsoluteSize
+        local panelPosition, panelSize = panel.AbsolutePosition, panel.AbsoluteSize
+        local viewport = camera.ViewportSize
+        -- AbsolutePosition and GUI hit testing share inset-relative coordinates.
+        -- Keep a two-pixel margin inside both the dedicated area and the panel.
+        local left = math.max(areaPosition.X + 2, panelPosition.X + 2, 2)
+        local top = math.max(areaPosition.Y + 2, panelPosition.Y + 2, 2)
+        local right = math.min(areaPosition.X + areaSize.X - 2, panelPosition.X + panelSize.X - 2, viewport.X - inset.X - 2)
+        local bottom = math.min(areaPosition.Y + areaSize.Y - 2, panelPosition.Y + panelSize.Y - 2, viewport.Y - inset.Y - 2)
+        if right <= left or bottom <= top then return nil end
+        local x, y = math.round((left + right) * 0.5), math.round((top + bottom) * 0.5)
+        if x < left or x > right or y < top or y > bottom then return nil end
+        -- When the UI is hosted under PlayerGui/CoreGui, also reject covered points.
+        local host = gui.Parent
+        while host and not host:IsA("BasePlayerGui") do host = host.Parent end
+        if host then
+            local hits = host:GetGuiObjectsAtPosition(x, y)
+            local front = hits[1]
+            if not front or (front ~= clickArea and not front:IsDescendantOf(clickArea)) then return nil end
+        end
+        return Vector2.new(x + inset.X, y + inset.Y)
+    end
+    local function releaseClick()
+        if not pressedPoint then return end
+        local point = pressedPoint
+        local function release() VIM:SendMouseButtonEvent(point.X, point.Y, 0, false, game, 0) end
+        local ok, reason = pcall(release)
+        if not ok then ok, reason = pcall(release) end
+        if ok then
+            if pressedSuccessfully then reportClickFailure(nil, true) end
+            pressedPoint, releaseAt, pressedSuccessfully = nil, nil, nil
+        else reportClickFailure(reason) end
+    end
+    modules.idleClick = {stop = function()
+        nextClickAt = nil
+        releaseClick()
+    end}
+    connect(game:GetService("RunService").Heartbeat, function()
+        local indicatorColor = scriptErrors.hasAny() and errorColor or colors.surface
+        if clickArea.BackgroundColor3 ~= indicatorColor then clickArea.BackgroundColor3 = indicatorColor end
+        local now = os.clock()
+        if pressedPoint then
+            if now >= releaseAt or not alive or not minimized or not preferences.masterEnabled
+                or dragging or not gui.Enabled or not panel.Visible or not minimizedControls.Visible
+                or not clickArea.Visible or GuiService.MenuIsOpen then releaseClick() end
+            return
+        end
+        if not alive or not minimized or not preferences.masterEnabled then nextClickAt = nil; return end
+        if not nextClickAt then nextClickAt = now + 2; return end
+        if now < nextClickAt then return end
+        nextClickAt = now + 2
+        local ok, reason = pcall(function()
+            local point = clickPoint()
+            if not point then return end
+            -- Hold independently of stage inputs; release on a later heartbeat after 0.1s.
+            pressedPoint, releaseAt, pressedSuccessfully = point, now + 0.1, false
+            VIM:SendMouseButtonEvent(point.X, point.Y, 0, true, game, 0)
+            pressedSuccessfully = true
+        end)
+        if not ok then
+            releaseClick()
+            reportClickFailure(reason)
+        end
+    end)
+end
+
+local stageGuide
 local function selectTab(id)
+    if stageGuide then stageGuide.Visible = false end
     selectedTab = id
-    address.Text = "farm://" .. id
+    address.Text = "automation://" .. id
     for key, page in pairs(pages) do
         if tabs[key] then
             page.frame.Visible = key == id
@@ -1445,17 +1274,16 @@ local flowParts = {}
 for _, id in ipairs(order) do table.insert(flowParts, flowLabels[id]) end
 local flowDescription = table.concat(flowParts, " > ")
 assert(({master=true, sell=true, pickaxe=true, upgrades=true, upgradingOldUnit=true, units=true, mutation=true, upgradingUnit=true, cycleEnd=true})[CONFIG.UI.InitialTab], "Invalid CONFIG.UI.InitialTab")
--- When editing any stage's flow, update its numbered UI sequence below in the same change.
--- Keep the steps in execution order and reflect any added, removed, or conditional actions.
+
 local specs = {
-    {"master", "Master", "Master: OFF - Click to turn ON", flowDescription .. " | Equip Best before upgrades when eligible, and again at cycle end."},
+    {"master", "Master", "Master: OFF - Click to turn ON", flowDescription .. " | Equip Best at cycle end."},
     {"sell", "Sell", "Run Auto Sell", "1. Collect the chest at your plot.\n2. Teleport to the Hub and open the sell stand.\n3. Click Select All, then Sell.\n4. Return to your plot."},
     {"pickaxe", "Pickaxe", "Buy Best Pickaxe", "1. Open the shop, wait for it to refresh, then close it.\n2. Find the highest unlocked pickaxe.\n3. Check its saved limit and whether its buy button is green.\n4. Record and send one purchase request if eligible."},
-    {"upgrades", "Upgrades", "Run Upgrades", "1. Open the skill tree and scan the current zone.\n2. Recheck Colossus Pips as upgrades run.\n3. Prioritize eligible Density, then other available nodes.\n4. On positive Pips, save stages 3-7 OFF and Unlimited Best Pickaxe ON.\nWhile OFF: Master only checks tutorial visibility until hidden."},
+    {"upgrades", "Upgrades", "Run Upgrades", "1. Open the skill tree and scan the current zone.\n2. Recheck Colossus Pips as upgrades run.\n3. Prioritize eligible Density, then other available nodes.\n4. Turn stages 3-7 OFF as soon as Colossus Pips reach 1 or higher in the current zone; otherwise turn them ON.\nTurn Unlimited Best Pickaxe ON at the max zone and OFF in other zones. Check zone/Density fresh every cycle, including while OFF."},
     {"upgradingOldUnit", "Upgrade Old Units", "Run Upgrade Old Units", "1. Check that current-zone Density is 0.\n2. Find displayed units matching the previous zone's required names.\n3. Upgrade Damage toward the target, starting with the lowest level.\n4. Stop when the target is reached or further upgrades are unavailable."},
-    {"units", "Required Units", "Run Required Units", "1. Check cooldown and refresh the hotbar.\n2. Count matching units on display and in the hotbar.\n3. If eligible, remove displayed units and refill the hotbar.\n4. Place the required matches."},
+    {"units", "Required Units", "Run Required Units", "1. Check cooldown and clear the hotbar.\n2. Count whitelisted inventory copies plus displayed units.\n3. If eligible, remove displayed units.\n4. Fill empty unlocked pads using one stack at a time through hotbar 1."},
     {"mutation", "Mutate Units", "Run Mutate Units", "1. Check zone rules, Density, and Required Units preparation.\n2. Scan mutations in the first required unlocked holders.\n3. Roll eligible units below the active targets.\n4. Rescan until the targets are met or further rolls are unavailable."},
-    {"upgradingUnit", "Upgrade Units", "Run Upgrade Units", "1. Check cooldown and scan the required lineup.\n2. Request early Equip Best if the required slots qualify.\n3. Upgrade Damage to the allowed cap, with stat catch-up between batches.\n4. Finish Speed and MineSpeed catch-up on eligible units."},
+    {"upgradingUnit", "Upgrade Units", "Run Upgrade Units", "1. Check cooldown and scan the required lineup.\n2. Upgrade Damage to the allowed cap, with stat catch-up between batches.\n3. Finish Speed and MineSpeed catch-up on eligible units."},
     {"cycleEnd", "Cycle end", "Run Cycle end", "1. Equip Best and wait for the equip delay.\n2. Select Current Zone if enabled.\n3. Select Next Zone if enabled.\n4. Attempt to unlock remaining holder slots."},
 }
 for index, spec in ipairs(specs) do
@@ -1512,14 +1340,18 @@ pages.units.resetCooldown.Name = "ResetSequenceCooldown"
 local unitLevelList = make("ScrollingFrame", pages.upgradingUnit.frame, {
     Name = "UnitLevelCaps", Position = UDim2.fromOffset(18, 250),
     Size = UDim2.new(1, -36, 1, -262), BackgroundTransparency = 1,
-    BorderSizePixel = 0, ScrollBarThickness = 5, CanvasSize = UDim2.fromOffset(0, 12 * 28),
+    BorderSizePixel = 0, ScrollBarThickness = 5, CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
     ScrollingDirection = Enum.ScrollingDirection.Y,
 })
-for zone = 1, 12 do
-    local zoneId = "Z" .. zone
-    local cap = CONFIG.Units.RequiredByZone[zoneId].MaxLevelCap
-    label(unitLevelList, zoneId .. " | Max level cap per unit: " .. tostring(cap),
-        UDim2.fromOffset(6, (zone - 1) * 28), UDim2.new(1, -24, 0, 24), 13)
+do
+    local zones = {}
+    for zoneId in pairs(CONFIG.Units.RequiredByZone) do table.insert(zones, zoneId) end
+    table.sort(zones, function(a, b) return (tonumber(a:match("%d+")) or 0) < (tonumber(b:match("%d+")) or 0) end)
+    for index, zoneId in ipairs(zones) do
+        local cap = CONFIG.Units.RequiredByZone[zoneId].MaxLevelCap
+        label(unitLevelList, zoneId .. " | Max level cap per unit: " .. tostring(cap),
+            UDim2.fromOffset(6, (index - 1) * 28), UDim2.new(1, -24, 0, 24), 13)
+    end
 end
 local mutationList = make("ScrollingFrame", pages.mutation.frame, {
     Name = "MutationSettings", Position = UDim2.fromOffset(18, 238),
@@ -1528,7 +1360,7 @@ local mutationList = make("ScrollingFrame", pages.mutation.frame, {
     ScrollingDirection = Enum.ScrollingDirection.Y,
 })
 pages.master.status.Text = "OFF. Turn Master ON to repeat the cycle; click again to turn OFF."
-pages.mutation.status.Text = "Mutate only the first RequiredUnitCount unlocked holders. Disabled rules and cached cycle density 2+ skip rolling."
+pages.mutation.status.Text = "Mutate only the first RequiredUnitCount unlocked holders. Zero tier counts and cached cycle density 2+ skip rolling."
 pages.mutation.status.Size = UDim2.new(1, -36, 0, 40)
 renderMutationSettings = function()
     for _, row in ipairs(mutationList:GetChildren()) do row:Destroy() end
@@ -1540,8 +1372,8 @@ renderMutationSettings = function()
     for index, zone in ipairs(zones) do
         local settings = CONFIG.Units.RequiredByZone[zone].RequiredMutations or {}
         local caption = string.format(
-            "%s | Enabled: %s\nPlatinum: %d   Rainbow: %d   Frozen: %d\nInferno: %d   Nightmare: %d   Unreal: %d",
-            zone, tostring(settings.Enabled == true), settings.Platinum or 0, settings.Rainbow or 0,
+            "%s | Tier counts: %s\nDiamond: %d   Platinum: %d   Rainbow: %d\nFrozen: %d   Inferno: %d   Nightmare: %d   Unreal: %d",
+            zone, hasMutationRequirements(settings) and "configured" or "none", settings.Diamond or 0, settings.Platinum or 0, settings.Rainbow or 0,
             settings.Frozen or 0, settings.Inferno or 0, settings.Nightmare or 0, settings.Unreal or 0)
         label(mutationList, caption, UDim2.fromOffset(6, (index - 1) * 76), UDim2.new(1, -24, 0, 70), 12)
     end
@@ -1599,9 +1431,332 @@ for index, id in ipairs(order) do
 end
 refreshStageToggles(false)
 resetStageRows()
+do
+    local guides = {
+        master = [[MASTER FLOW
+Run enabled stages in the configured order. Each stage button can also run its stage once. Master repeats until stopped; saved Master/stage toggles are restored on load.
+
+Before starting, save any pending Pickaxe limit edit when Pickaxe is enabled. Reject overlapping runs and rapid repeat clicks. Master turns off enchant rolling and enables noclip/flight; failure to start movement stops the run.
+
+Start each cycle with fresh cycle state. In the first cycle, enabled automatic Workspace cleanup runs once at the start, after startup teleport is confirmed. Skip disabled stages, except Upgrades still prepares cached zone/Density values. Restore temporary movement and release held inputs after each stage. Pause between stages.
+
+On a stage error, show its error, close Sell/skill-tree/inventory panels, and retry on the next cycle. Still attempt Cycle end if enabled. During the cycle delay, visit the pickaxe shop and click its first two purchase rows; see the Pickaxe guide. While Master is ON and the UI is minimized, send a virtual mouse click every two seconds to the dedicated idle-click area inside the panel, holding mouse-down for 0.1 seconds before release. This runs independently of the current stage. Its area turns red while a reported retry/stage error is active and returns to its normal color after recovery. Expected mutation rolls are excluded. Minimized-area clicks pause while the between-cycle pickaxe shop is active so its purchase clicks cannot overlap.
+
+Stop, Master OFF, unload, or the relevant shortcuts cancel active work and clean up movement, prompts, keys, and focused panels.
+
+MASTER CONTROLS
+Stage toggles select the repeated flow. Reset Cooldown is in Required Units. A confirmed zone change resets the unit-sequence cooldown. The zone card shows cached requirements and observed progress.
+
+Unlimited Best Pickaxe bypasses the saved limit for the highest unlocked pickaxe, while retaining request counts. Delete other plots / weather removes other plots and weather effects while enabled; rejoin to restore removed plots.
+
+Ctrl+1 toggles Master; Ctrl+2 toggles enchant rolling; Ctrl+3 opens Altar; Ctrl+4 Events Board; Ctrl+5 Mailbox; Ctrl+6 Trial. Rolling/teleport shortcuts turn Master OFF and are ignored while typing.
+
+HOTBAR UPGRADES
+Refresh and select hotbar entries to process their copies through M1. This is a separate run, outside the eight-stage cycle. Place each selected copy, check its identity, upgrade Damage toward the configured target and Speed/Mining to their available maxima, then pick it up before the next copy. Stop on changed hotbar identity/count, missing M1 controls, or unavailable upgrades. Retry unconfirmed placement/pickup by returning to M1 with a different random one-stud horizontal offset and rechecking identity, occupancy, and stack consumption before activating its prompt again.]],
+        sell = [[ACTIONS
+1. Startup clicks OfflineFrame.Content.CollectButton when the offline popup is visible, waits 0.5 seconds, then clicks TeleportButton. Each click is observed for up to one second; attempts continue until the same character moves more than 10 studs after a teleport click. A hidden or absent offline popup does not block retries. A missing/hidden TeleportButton or a click without confirmed movement triggers a chest prompt/open-close recovery before retrying; chest recovery movement never confirms a teleport.
+2. Teleport to your plot, wait, and collect the plot chest.
+3. Teleport to the Hub. Move in front of the sell stand, face the camera toward it, and activate its prompts.
+4. Hold the enabled sell prompt for its required duration, then wait for the game to open the sell window with visible ancestors. Each failed window retry returns the current character to a different random point exactly one horizontal stud from the usual stand position, stops residual movement, faces the stand, and activates its prompt again. Repeat until the window appears or the run is stopped.
+5. Wait for a visible, active Select All button with a usable size, checking its name, text, or child caption. Click it once, wait, then wait for and click the separate Sell button. Wait for the sale, teleport back to your plot, and wait again.
+6. Master closes the sell window after this stage.
+
+CONDITIONS / STOPS
+Only act while this Sell run remains active. Click buttons only when visible and with a usable size. Missing stand parts or SellFrame stop the stage with an error. Select All and Sell controls are polled until ready or stopped; prolonged retries report the buttons found. Configured delays separate teleports, prompts, selection, and sale.]],
+        pickaxe = [[ACTIONS
+1. Save pending limit edits before starting; the limit must be a whole number of zero or more.
+2. Teleport to the pickaxe stand, wait for its enabled prompt, hold it long enough to open the shop, and wait for tiles to settle. Each unconfirmed opening retry returns beside the stand with a different random one-stud horizontal offset, then reactivates the prompt if the shop is still closed. Close the shop and restore position.
+3. Scan stable tile identities/colors. Tile IDs start at 2 in child order. Choose the highest unlocked ID, including an unlocked tile that is currently sold out or unaffordable.
+4. Load this account/game's saved per-ID request counts. Check the saved limit unless Unlimited Best Pickaxe is ON.
+5. Require the chosen tile to remain present and buyable (green). Reserve one count, save it, read it back to verify, recheck the tile, and send one purchase request.
+
+CONDITIONS / STOPS
+No lower-ID fallback is purchased when the highest unlocked tile is unavailable. No request is sent if the limit is reached or the selected tile is not buyable. Unlimited mode bypasses the limit only; requests are still counted.
+
+Unavailable file functions, invalid or unreadable count data, a disappearing previously seen file, or unverifiable saves stop purchases. A count saved before a later cancellation or color change remains reserved. Counts represent reserved requests, rather than confirmed inventory purchases.
+
+BETWEEN MASTER CYCLES
+During the cycle delay, open the shop and click visible buy buttons on rows with LayoutOrder 1 then 2 at the configured click interval. These use VirtualInputManager mouse-down/up clicks with a 0.05-second hold, separate from this stage's best-pickaxe limit/count reservation. Close the shop and restore position when the wait ends or is stopped. A shop-wait error uses the rest of the cycle delay. Minimized-area clicks resume afterward; their error-color indicator remains active throughout.]],
+        upgrades = [[ZONE / DENSITY SCAN
+Open the skill tree. Detect the highest numbered loaded Zone_Z<number> folder after it settles. Cache its zone ID, folder name, and confirmed Density for the cycle. A changed zone clears the unit-sequence cooldown. The maximum configured zone is the highest numeric Z key in RequiredByZone, with no fixed zone-number limit.
+
+Density is the highest green/upgraded Density node. Unknown node colors or an unsettled/missing tree are retried until ready or stopped; prolonged retries log errors. Confirmed Density 2+ stops mutation for that zone; a later confirmed lower Density clears a stale stop flag. Hide and save the tutorial button at Z2+ or at Z1 with Density 1+.
+
+UPGRADE SELECTION
+Recheck Colossus progress before and during upgrades. Prioritize the next available Density node. Density II requires every exact required slot M1..M<RequiredUnitCount> to hold a current-zone whitelisted unit at Diamond or higher, plus configured mutation quotas. RequiredUnitCount zero passes this gate.
+
+Before Density is fully upgraded, other available nodes must be above its next-node row or on the same row within the configured tolerance. Rank them by horizontal distance, then row height, then name. When Density is maxed, consider all available non-Density nodes.
+
+Use configured node-category mappings, falling back to the node base name. Skip invalid categories. Recheck the node, its color, and the Density II gate before each purchase. Retry while the node remains available, respecting the request delay and reporting prolonged retries. Stop processing a node when it disappears, becomes unavailable, or valid Colossus Pips reach 1 or higher in the current zone. Rescan Density and count confirmed green upgrades; repeat while upgrades are confirmed.
+
+COLOSSUS / NOTIFICATIONS
+Positive valid Colossus Pips confirms the unlock. Turn stages 3-7 OFF as soon as valid Colossus Pips reach 1 or higher (for example 1/5), in any current zone; otherwise turn stages 3-7 ON. Turn Unlimited Best Pickaxe ON at the max zone, even without positive Colossus Pips, and OFF in other zones. Send a Colossus alert with username, zone name/ID, and Pips. Reaching the highest configured zone sends a separate max-zone alert to the same webhook.
+
+Both messages end their elapsed-time line with @everyone. Time is measured from the account/game's cached first script load, including restarts and offline time. Old caches missing a valid timestamp start tracking on their next load. Under one hour displays unknown. A valid saved timestamp is retained.
+
+Each notification type has its own sent flag per zone. Pending requests suppress duplicates in the current run; successful HTTP responses save the sent flag in the preferences cache. Failed requests can be retried on later checks. Missing webhook/request support skips sending. A cache-save failure is warned because it can allow a repeat after restarting.
+
+WHEN UPGRADES IS OFF
+In Master, open the skill tree and freshly scan the Canvas zone, Density, and Colossus Pips every cycle, including while Upgrades is OFF. Recheck Colossus progress in the current zone. If valid Colossus Pips have not reached 1, turn stages 3-7 ON and resume Upgrades in the same cycle. Turn Unlimited Best Pickaxe ON at the max zone and OFF in other zones. These scans also prepare zone selection and tutorial hiding.
+
+FINISH
+Close the skill tree and keep the zone/Density values ready for Cycle end. Current/next selection follows its toggles; a standalone Upgrades run selects zones immediately after finishing.]],
+        upgradingOldUnit = [[ENTRY CONDITIONS
+Use the cached current zone and Density. Run only at Density 0. Z1 has no previous zone and is skipped. Skip if the previous numbered zone has no configured Names.
+
+ACTIONS
+1. Check plot ownership and scan displayed numbered holders.
+2. Read each unit's displayed name. Include only exact matches in the previous zone's Names list; skip other or unreadable names.
+3. Upgrade Damage only, toward UpgradingOldUnit.TargetLevel. Work on the lowest Damage level first, breaking ties by holder number, in batches of up to five requests.
+4. Open the correct unit panel and require a green Damage button. Recheck unit identity/ownership and confirm a level or button-color response after each request. Close focus between batches.
+
+STOPS
+Skip if no displayed unit matches. Stop a unit at the target or when Damage is unavailable; stop with an error if ownership, identity, character, required controls, or expected response is lost. This stage does not run Speed/MineSpeed catch-up.]],
+        units = [[ENTRY CONDITIONS
+Check the shared unit-sequence cooldown before refreshing anything. If active, keep displayed units and skip. Reset Cooldown clears it; a new zone resets it. Validate the equipment mode, use cached zone/Density, check plot ownership, and start the sequence cooldown.
+
+AVAILABILITY CHECK
+Clear occupied hotbar assignments, open inventory, and count current-zone whitelisted copies directly from inventory, including stack quantities. At Density 2+, require a nonempty animation tag; Density 0-1 accepts either. Skip unreadable Damage values. Add matching displayed units to this inventory count; no inventory card is selected during the check. If insufficient, FinalEquipMode is Best, or Density is 0, keep displayed units and skip replacement/mutation preparation. Equip Best is handled at Cycle end.
+
+REPLACEMENT / PLACEMENT
+Once eligible, require a ready character, close panels, and remove all displayed units with confirmed pickup retries. Clear occupied hotbar assignments again, open inventory, and recheck available matching copies plus units already placed in required pads.
+
+Rank eligible inventory stacks by highest Damage, prefer _AnimTag on equal Damage, then preserve inventory order. Select only the highest ranked stack into hotbar 1. Confirm its stack quantity and that other hotbar slots are empty, keep inventory open, and place its copies in empty unlocked pads in holder-number order. Finish placing the selected stack before fetching another inventory card; confirm hotbar 1 is empty before loading another stack. Continue until every unlocked empty pad is filled, including pads beyond RequiredUnitCount, or no eligible inventory copies remain. RequiredUnitCount stays the minimum count gate. Keep inventory open between placement batches and close it when placement finishes or stops for insufficient copies.
+
+If selection confirmation fails, recheck for delayed success, reacquire the same card, and retry without clearing the selected stack or cycling inventory closed and open. Unreadable quantities, UI waits, pickup, and placement retry without timeouts and report periodic errors. Preserve character, plot, hotbar identity, focus/text-field, and held-input checks.
+
+MUTATION READINESS
+Confirm whitelisted units occupy every required pad and provide that displayed-unit count to later stages. Partial/failed preparation, cooldown skips, and Density 0 keep Mutate Units locked.]],
+        mutation = [[ENTRY CONDITIONS
+Use the cached zone/Density. Skip at Density 2+, when all RequiredMutations tier counts are zero, or when full Required Units preparation/count confirmation did not complete this cycle.
+
+Validate configured tier counts and RequiredUnitCount; quota totals cannot exceed that count. Select only the first RequiredUnitCount unlocked holders by holder number. Require all selected holders to contain readable displayed mutations. Extra holders are excluded.
+
+TARGETS
+All required units must reach Diamond or higher. Higher mutation ranks can satisfy lower-rank quotas; cumulative counts reserve the higher requirements first. Choose the lowest-ranked required unit, breaking ties by holder number.
+
+ROLL ACTIONS
+Move to the selected holder, open its unit panel and Mutation tab, and require a green or orange Roll button. Recheck ownership, selected-holder scope, and the Density II stop flag before sending a roll.
+
+For Inferno/Nightmare/Unreal requirements, keep focus and rapidly roll toward the highest unmet cumulative target. Read the focused mutation after each roll. If a holder label is behind, reopen the same unit and verify its current panel mutation instead of waiting for an old exact-match label. Accept a higher displayed mutation; use the freshly verified panel value when the display is lower. Otherwise send one roll, wait, close focus, and rescan.
+
+STOP / COMPLETE
+Stop when required slots satisfy their Diamond minimum and applicable quotas, funds are unavailable, Density II is confirmed, required holders disappear, mutation text is unreadable, the character/plot changes, or a panel/scan times out. Update observed mutation progress as rolls complete and close focus during cleanup. Zero tier counts skip rolling but do not remove the Diamond requirement used by full Damage and Density II gates.]],
+        upgradingUnit = [[ENTRY CONDITIONS
+Use the current cycle's Required Units sequence allowance when present. Otherwise check the shared cooldown and start a new sequence only when ready. Consume that allowance for this run. Validate cached Density, check plot ownership, close previous focus, and scan displayed units.
+
+FULL DAMAGE GATE
+The exact required slots must all be displayed, match current-zone Names, and be Diamond or higher. Configured mutation quotas must pass. If the gate fails, only displayed current-zone whitelisted units receive Damage toward level 10; no other units receive Damage in that branch.
+
+WHEN THE GATE PASSES
+Upgrade matching required units toward the zone MaxLevelCap. Confirm required units at cap before allowing Damage on cached extra displayed holders. Recheck the required lineup/quotas after core upgrades. Extras must still be displayed and cached. Their Damage target is half their own actual maximum from the Stats panel, rounded down; the zone MaxLevelCap does not limit extra Damage. The gate can fail when required count is zero; that does not grant unrestricted Damage upgrades.
+
+BATCHES / STAT CATCH-UP
+Choose the lowest Damage level first, then holder number, with up to the current zone's DamageBatchSize requests per batch (default 5). Require a green button and confirm each level/color response. On the full-cap path, catch up that same unit immediately after each Damage batch, before any further Damage upgrades on any unit. Refresh its Speed/Mining levels and maxima from the Stats panel and catch up to the lesser of its current Damage and each stat maximum. If catch-up is unavailable, pause further Damage.
+
+Cache identities and initial Damage/Speed/Mining levels for this run. Refresh Speed/Mining readings for each unit during catch-up. Include current-zone whitelisted units, units already at the configured stat minimum, and extras when a valid core exists. After Damage processing, catch up Speed and MineSpeed for cached displayed units at or above the minimum Damage level, regardless of their name. Balance the lowest stat levels in batches of up to five; cap each at the lesser of current Damage and that stat's maximum.
+
+STOPS
+Unavailable upgrade buttons stop progress rather than sending requests. Unfinished stat catch-up pauses further Damage. Identity, plot, character, display, focus-target, unreadable-level, or invalid-response failures stop the stage. Close the focused unit panel on exit.]],
+        cycleEnd = [[ACTIONS
+1. Check plot ownership. Request Equip Best, wait the configured delay, and refresh observed mutation progress when a zone is known. A repeated cycle-end request in the same cycle is skipped.
+2. Select the cached current zone if its toggle is ON.
+3. Select the next numbered zone if its toggle is ON.
+4. Scan numbered holders for unlock prompts. Move to each holder, unequip tools, and hold enabled Unlock / Unlock at the hub prompts for at least one second plus padding.
+
+ZONE-SELECTION CONDITIONS
+Selection runs only if Upgrades has prepared zone/Density values. It can use the scan prepared while Upgrades is OFF. Both toggles OFF skips zone selection. Next means the cached zone number plus one; this requests selection without claiming the next zone is unlocked.
+
+HOLDER CONDITIONS
+Skip missing holders and unavailable/disabled prompts. If prompts are missing or still say Unlock, try again on later cycles. After a scan confirms at least one numbered holder and no remaining unlock/missing prompts, skip future unlock scans for this script execution.
+
+MASTER / STANDALONE
+Master attempts this stage after normal stages, including after a stage error, when Cycle end is enabled. Its own failure is reported and retried in later cycles. A standalone run may Equip Best and unlock holders while zone selection is skipped because no cycle scan is ready.]],
+    }
+    local common = "\n\nRUN SAFETY\nRun buttons start work only while idle and outside the click debounce. Stop/unload cancels active work and releases held inputs. Stages that move temporarily restore saved position where available. Missing required game objects, invalid settings, changed targets, or prolonged confirmation retries are reported as errors in the script logs; see Master for retry behavior."
+    stageGuide = make("Frame", content, {
+        Name = "StageActionsAndConditions", Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = colors.surface, BorderSizePixel = 0, Visible = false, Active = true, ZIndex = 30,
+    })
+    local guideHeading = label(stageGuide, "Actions & conditions", UDim2.fromOffset(18, 16), UDim2.new(1, -124, 0, 26), 16)
+    guideHeading.Font, guideHeading.TextColor3 = Enum.Font.GothamBold, colors.text
+    local back = button(stageGuide, "Back", UDim2.new(1, -86, 0, 12), UDim2.fromOffset(68, 30))
+    local scroll = make("ScrollingFrame", stageGuide, {
+        Name = "GuideScroll", Position = UDim2.fromOffset(18, 54), Size = UDim2.new(1, -36, 1, -72),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 5,
+        CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
+    })
+    local body = label(scroll, "", UDim2.fromOffset(0, 0), UDim2.new(1, -16, 0, 0), 14)
+    body.Name, body.AutomaticSize, body.TextColor3 = "GuideText", Enum.AutomaticSize.Y, colors.text
+    connect(back.Activated, function() stageGuide.Visible = false end)
+    for _, spec in ipairs(specs) do
+        local id, page = spec[1], pages[spec[1]]
+        local position = id == "master" and UDim2.fromOffset(18, masterStageBottom + 8) or UDim2.new(1, -196, 0, 14)
+        local size = id == "master" and UDim2.new(0.5, -36, 0, 28) or UDim2.fromOffset(178, 28)
+        local open = button(page.frame, "Actions & conditions", position, size)
+        open.Name, open.TextSize = "OpenStageGuide", 11
+        connect(open.Activated, function()
+            local settings = {}
+            if id == "master" then
+                table.insert(settings, string.format("Stage delay: %gs. Cycle delay: %gs. Flight speed: %g. Hotbar Damage target: %d.",
+                    CONFIG.Flow.StageDelay, CONFIG.Flow.CycleDelay, CONFIG.General.MasterFlySpeed, CONFIG.HotbarUpgrade.DamageTargetLevel))
+            elseif id == "sell" then
+                table.insert(settings, string.format("Teleport wait: %gs. Chest wait: %gs. Stand wait: %gs. Shop waits: unlimited. Select All wait: %gs. Sale wait: %gs.",
+                    CONFIG.Sell.TeleportDelay, CONFIG.Sell.ChestDelay, CONFIG.Sell.StandDelay,
+                    CONFIG.Sell.SelectAllDelay, CONFIG.Sell.SellDelay))
+            elseif id == "pickaxe" then
+                table.insert(settings, string.format("Default limit: %d per ID (saved edits take priority). Unlimited best: %s. Between-cycle click interval: %gs.",
+                    CONFIG.Pickaxe.DefaultMaxPerID, tostring(CONFIG.Pickaxe.UnlimitedBestPickaxe), CONFIG.Pickaxe.WaitingClickDelay))
+            elseif id == "upgrades" then
+                table.insert(settings, string.format("Per-node requests: unlimited while available. Request delay: %gs. Row tolerance: %g.",
+                    CONFIG.Upgrades.RequestDelay, CONFIG.Upgrades.RowScaleTolerance))
+            elseif id == "upgradingOldUnit" then
+                table.insert(settings, string.format("Old-unit Damage target: %d.", CONFIG.UpgradingOldUnit.TargetLevel))
+            elseif id == "units" then
+                table.insert(settings, string.format("Equipment mode: %s. Sequence cooldown: %gs. Removal/placement retries: unlimited.",
+                    CONFIG.Units.FinalEquipMode, CONFIG.Units.SequenceCooldown))
+            elseif id == "mutation" then
+                table.insert(settings, "Mutation order: " .. table.concat(CONFIG.Mutation.Priority, " < "))
+            elseif id == "upgradingUnit" then
+                table.insert(settings, string.format("Stat catch-up starts at Damage %d. Sequence cooldown: %gs.",
+                    CONFIG.Units.StatUpgrade.MinimumDamageLevel, CONFIG.Units.SequenceCooldown))
+            elseif id == "cycleEnd" then
+                table.insert(settings, string.format("Equip Best delay: %gs. Select current: %s. Select next: %s.",
+                    CONFIG.Units.BestEquipDelay, tostring(CONFIG.Upgrades.SelectCurrentZone), tostring(CONFIG.Upgrades.SelectNextZone)))
+            end
+            if id == "upgrades" or id == "upgradingOldUnit" or id == "units" or id == "mutation" or id == "upgradingUnit" then
+                local zones = {}
+                for zoneId in pairs(CONFIG.Units.RequiredByZone) do table.insert(zones, zoneId) end
+                table.sort(zones, function(a, b) return (tonumber(a:match("%d+")) or 0) < (tonumber(b:match("%d+")) or 0) end)
+                table.insert(settings, "\nZONE SETTINGS (from the current config)")
+                for _, zoneId in ipairs(zones) do
+                    local rule = CONFIG.Units.RequiredByZone[zoneId]
+                    local rows = {zoneId .. " - " .. (rule.DisplayName or zoneId)}
+                    if id == "upgrades" or id == "upgradingUnit" then
+                        table.insert(rows, "Damage cap: " .. tostring(rule.MaxLevelCap) .. "; required units: " .. tostring(rule.RequiredUnitCount))
+                    end
+                    if id == "upgradingUnit" then table.insert(rows, "Damage batch size: " .. tostring(rule.DamageBatchSize == nil and 5 or rule.DamageBatchSize)) end
+                    if id == "units" then table.insert(rows, "Required units: " .. tostring(rule.RequiredUnitCount)) end
+                    if id ~= "mutation" then table.insert(rows, "Names: " .. (#(rule.Names or {}) > 0 and table.concat(rule.Names, ", ") or "none")) end
+                    if id == "mutation" or id == "upgrades" or id == "upgradingUnit" then
+                        local mutations = rule.RequiredMutations or {}
+                        local quotas = {}
+                        for _, name in ipairs({"Platinum", "Rainbow", "Frozen", "Inferno", "Nightmare", "Unreal"}) do
+                            table.insert(quotas, name .. "=" .. tostring(mutations[name] or 0))
+                        end
+                        table.insert(rows, "Mutation tier counts configured: " .. tostring(hasMutationRequirements(mutations))
+                            .. "; required units: " .. tostring(rule.RequiredUnitCount) .. "; " .. table.concat(quotas, ", "))
+                    end
+                    table.insert(settings, table.concat(rows, "\n"))
+                end
+            end
+            guideHeading.Text = page.name .. " - guide"
+            body.Text = guides[id] .. common .. "\n\nCURRENT SETTINGS\n" .. table.concat(settings, "\n\n")
+            scroll.CanvasPosition = Vector2.zero
+            stageGuide.Visible = true
+        end)
+    end
+end
+
+do
+    local refresh = button(pages.master.frame, "Refresh Script (Run Once)",
+        UDim2.new(0.5, 0, 0, masterStageBottom + 8), UDim2.new(0.5, -18, 0, 28))
+    refresh.Name, refresh.TextSize = "RefreshScriptOnce", 12
+    local refreshing = false
+    connect(refresh.Activated, function()
+        if not alive or refreshing then return end
+        refreshing = true
+        refresh.Active, refresh.AutoButtonColor = false, false
+        refresh.Text = "Refreshing script..."
+        -- Unload the current instance without changing or deleting its preferences cache.
+        unloadScript()
+        local ok, message = pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/championsDecay/s/refs/heads/main/main.luau"))()
+        end)
+        if not ok then consoleWarn("[Refresh Script] " .. tostring(message)) end
+    end)
+end
+
+do
+    local copyLogs = button(pages.master.frame, "Copy Script Logs",
+        UDim2.fromOffset(18, masterStageBottom + 48), UDim2.new(1, -36, 0, 28))
+    copyLogs.Name, copyLogs.TextSize = "CopyScriptLogs", 12
+    connect(copyLogs.Activated, function()
+        if not alive then return end
+        local copy = type(setclipboard) == "function" and setclipboard
+            or type(toclipboard) == "function" and toclipboard
+            or type(setrbxclipboard) == "function" and setrbxclipboard
+        if not copy then
+            footer.Text = "Clipboard is unavailable in this executor."
+            return
+        end
+        if #scriptLogs == 0 then
+            footer.Text = "No script logs have been recorded in this session yet."
+            return
+        end
+        local ok, message = pcall(copy, table.concat(scriptLogs, "\n"))
+        if not alive then return end
+        if ok then
+            footer.Text = string.format("Copied %d script log entries (latest 2000 this session).", #scriptLogs)
+        else
+            footer.Text = "Could not copy script logs: " .. tostring(message)
+        end
+    end)
+end
+masterStageBottom = masterStageBottom + 36
+
+do
+    local toggle = button(pages.master.frame, "", UDim2.fromOffset(18, masterStageBottom + 116), UDim2.new(1, -36, 0, 30))
+    toggle.Name, toggle.TextSize = "WorkspaceCleanupToggle", 12
+    local function refresh()
+        local enabled = CONFIG.General.WorkspaceCleanupEnabled
+        toggle.Text = "Auto delete workspace extras: " .. (enabled and "ON" or "OFF")
+        toggle.BackgroundColor3 = enabled and colors.accent or colors.bg
+    end
+    pages.master.refreshWorkspaceCleanupToggle = refresh
+    connect(toggle.Activated, function()
+        if not alive then return end
+        CONFIG.General.WorkspaceCleanupEnabled = not CONFIG.General.WorkspaceCleanupEnabled
+        savePreferences()
+        refresh()
+        modules.workspaceCleanup.refresh()
+    end)
+    refresh()
+    label(pages.master.frame, "Runs once at the start of the first Master cycle. Run once also works while OFF.",
+        UDim2.fromOffset(18, masterStageBottom + 150), UDim2.new(1, -36, 0, 28), 11)
+end
+
+do
+    local features = {
+        {key = "dailySpinEnabled", name = "AutoDailySpinToggle", caption = "Auto daily spin", offset = 184,
+            hint = "After the first Master cleanup check; repeats every 24 hours + 10 seconds."},
+        {key = "autoRedeemEnabled", name = "AutoRedeemToggle", caption = "Auto redeem codes", offset = 252,
+            hint = "After the spin check; sends each uncached code once, 2 seconds apart."},
+    }
+    for _, feature in ipairs(features) do
+        local toggle = button(pages.master.frame, "", UDim2.fromOffset(18, masterStageBottom + feature.offset), UDim2.new(1, -36, 0, 30))
+        toggle.Name, toggle.TextSize = feature.name, 12
+        local function refresh()
+            local enabled = preferences[feature.key]
+            toggle.Text = feature.caption .. ": " .. (enabled and "ON" or "OFF")
+            toggle.BackgroundColor3 = enabled and colors.accent or colors.bg
+        end
+        connect(toggle.Activated, function()
+            if not alive then return end
+            preferences[feature.key] = not preferences[feature.key]
+            savePreferences()
+            refresh()
+        end)
+        refresh()
+        label(pages.master.frame, feature.hint,
+            UDim2.fromOffset(18, masterStageBottom + feature.offset + 34), UDim2.new(1, -36, 0, 28), 11)
+    end
+end
+
 label(pages.master.frame,
     "SHORTCUTS (expanded or minimized)\nCtrl+1: Master ON/OFF   |   Ctrl+2: Enchant Roll ON/OFF\nCtrl+3: Altar   |   Ctrl+4: Events Board\nCtrl+5: Mailbox   |   Ctrl+6: Trial\nRoll and teleport shortcuts turn Master OFF. Ignored while typing.",
-    UDim2.fromOffset(18, masterStageBottom + 116), UDim2.new(1, -36, 0, 72), 12)
+    UDim2.fromOffset(18, masterStageBottom + 320), UDim2.new(1, -36, 0, 72), 12)
 
 do
     local toggle = button(pages.master.frame, "", UDim2.fromOffset(18, masterStageBottom + 48), UDim2.new(1, -36, 0, 30))
@@ -1657,7 +1812,7 @@ do
             quotas.Text = ""
             return
         end
-        local settings = rule.RequiredMutations or {Enabled = false}
+        local settings = rule.RequiredMutations or {}
         heading.Text = lastZone .. " requirements (cached)"
         local progress = masterRequirementProgress[lastZone] or {}
         local required = rule.RequiredUnitCount or 0
@@ -1668,25 +1823,12 @@ do
         for _, name in ipairs({"Platinum", "Rainbow", "Frozen", "Inferno", "Nightmare", "Unreal"}) do
             quotaTotal = quotaTotal + (settings[name] or 0)
         end
-        local diamondGoal = math.max(0, required - (progress.override and 1 or quotaTotal))
-        local state = settings.Enabled and "Enabled" or "Disabled (inactive)"
-        local overrideConfig = CONFIG.Mutation.HighTierOverride
-        local overrideState
-        if not settings.Enabled then
-            overrideState = "Inactive"
-        elseif not overrideConfig.Enabled then
-            overrideState = "Disabled"
-        elseif (settings.Inferno or 0) > 0 or (settings.Nightmare or 0) > 0 or (settings.Unreal or 0) > 0 then
-            overrideState = "Off (high-tier quota)"
-        elseif progress.override then
-            overrideState = mutations and mutations.DiamondTotal >= required and "Active" or "Triggered; Diamond+ needed"
-        else
-            overrideState = mutations and "Not triggered" or "Waiting for scan"
-        end
-        local diamondText = settings.Enabled and (diamondCurrent .. "/" .. tostring(diamondGoal)) or "Not required"
-        mutation.Text = string.format("Mutations: %s\nDiamond+: %s\nOverride: %s", state, diamondText, overrideState)
+        local diamondGoal = math.max(0, required - quotaTotal)
+        local state = hasMutationRequirements(settings) and "Tier counts configured" or "No tier quotas"
+        local diamondText = required > 0 and (diamondCurrent .. "/" .. tostring(diamondGoal)) or "Not required"
+        mutation.Text = string.format("Mutations: %s\nDiamond+: %s", state, diamondText)
         local entries = {}
-        if settings.Enabled then
+        if hasMutationRequirements(settings) then
             for _, name in ipairs({"Platinum", "Rainbow", "Frozen", "Inferno", "Nightmare", "Unreal"}) do
                 local goal = settings[name] or 0
                 if goal > 0 then
@@ -1700,13 +1842,12 @@ do
             table.insert(rows, entries[index] .. (entries[index + 1] and ("   " .. entries[index + 1]) or ""))
         end
         quotas.Text = table.concat(rows, "\n")
-        quotas.TextColor3 = settings.Enabled and colors.text or colors.muted
+        quotas.TextColor3 = hasMutationRequirements(settings) and colors.text or colors.muted
     end
     refreshMasterRequirements()
 end
 selectTab(CONFIG.UI.InitialTab)
 
--- Keep each original action's status writes, mirroring them to Master while it runs.
 local function stageStatus(id)
     return setmetatable({}, {
         __index = function(_, key) return pages[id].status[key] end,
@@ -1746,7 +1887,6 @@ local function resolveButton(object)
     return nil, description .. " contains multiple buttons: " .. table.concat(names, ", ")
 end
 
--- Use one signal so a panel is never toggled twice by a single action.
 local function clickButton(object)
     checkAlive()
     if type(firesignal) ~= "function" then error("This environment needs firesignal.", 0) end
@@ -1766,14 +1906,360 @@ local function clickButton(object)
             end
         end
     end
-    checkAlive() -- Handler lookup can yield in some executors.
+    checkAlive()
     if eventName == "Activated" then firesignal(target.Activated, nil, 1)
     else firesignal(target.MouseButton1Click) end
 end
 
-
 local getMyPlot
--- Teleport/Enchant Roll shortcuts stop Master; crate batches run independently.
+
+local function chestTopPosition(chest, base, character, root, position, maxDistance)
+    -- Include solid/visible chest geometry, but ignore invisible non-solid prompt volumes.
+    local minimum = Vector3.new(math.huge, math.huge, math.huge)
+    local maximum = Vector3.new(-math.huge, -math.huge, -math.huge)
+    local parts = chest:GetDescendants()
+    if chest:IsA("BasePart") then table.insert(parts, chest) end
+    local found = false
+    local function includePart(part)
+        found = true
+        for x = -1, 1, 2 do
+            for y = -1, 1, 2 do
+                for z = -1, 1, 2 do
+                    local corner = part.CFrame:PointToWorldSpace(Vector3.new(part.Size.X * x * 0.5,
+                        part.Size.Y * y * 0.5, part.Size.Z * z * 0.5))
+                    minimum = Vector3.new(math.min(minimum.X, corner.X), math.min(minimum.Y, corner.Y), math.min(minimum.Z, corner.Z))
+                    maximum = Vector3.new(math.max(maximum.X, corner.X), math.max(maximum.Y, corner.Y), math.max(maximum.Z, corner.Z))
+                end
+            end
+        end
+    end
+    for _, part in ipairs(parts) do
+        if part:IsA("BasePart") and (part.CanCollide or part.Transparency < 1) then includePart(part) end
+    end
+    if not found then includePart(base) end
+    -- The destination is upright: keep the avatar's lowest point one stud above the lid.
+    local bodyFrame, bodySize = character:GetBoundingBox()
+    local lowest = -root.Size.Y * 0.5
+    for x = -1, 1, 2 do
+        for y = -1, 1, 2 do
+            for z = -1, 1, 2 do
+                local corner = bodyFrame:PointToWorldSpace(Vector3.new(bodySize.X * x * 0.5,
+                    bodySize.Y * y * 0.5, bodySize.Z * z * 0.5))
+                lowest = math.min(lowest, root.CFrame:PointToObjectSpace(corner).Y)
+            end
+        end
+    end
+    position = position or base.Position
+    local stand = Vector3.new(math.clamp(position.X, minimum.X, maximum.X), maximum.Y - lowest + 1,
+        math.clamp(position.Z, minimum.Z, maximum.Z))
+    if maxDistance and (stand - position).Magnitude > maxDistance - 0.25 then
+        return nil, "The position above the chest and avatar bounds is outside prompt range."
+    end
+    return stand
+end
+
+local function recoverUnitPanelThroughChest(checkCurrent, operation)
+    local recoveryName = operation or "ExitButton recovery"
+    local function check()
+        checkAlive()
+        if checkCurrent then checkCurrent() end
+    end
+    check()
+    local plot = getMyPlot()
+    local chest = path(plot, {"Chest"})
+    local base = path(chest, {"ChestBase"})
+    local character = player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root or not base:IsA("BasePart") then error(recoveryName .. ": character or ChestBase is unavailable.", 0) end
+    local savedCFrame = root.CFrame
+    local ownsPosition = not originalRoot
+    if ownsPosition then originalRoot, originalCFrame = root, savedCFrame end
+    local function checkTarget()
+        check()
+        if player.Character ~= character or not root:IsDescendantOf(character) then
+            error("Character changed during " .. recoveryName .. ".", 0)
+        end
+        if not plot:IsDescendantOf(workspace) or tonumber(plot:GetAttribute("OwnerUserId")) ~= player.UserId
+            or not chest:IsDescendantOf(plot) then
+            error("Plot/chest ownership changed during " .. recoveryName .. ".", 0)
+        end
+    end
+    local function chestFrame()
+        local mine = playerGui:FindFirstChild("MineGui")
+        return mine and mine:FindFirstChild("ChestFrame")
+    end
+    local function triggerChest()
+        checkTarget()
+        local prompt = waitUntil(function()
+            checkTarget()
+            local found
+            for _, candidate in ipairs(chest:GetDescendants()) do
+                if candidate:IsA("ProximityPrompt") and candidate.Enabled then
+                    if found then error("Multiple enabled chest prompts found during " .. recoveryName .. ".", 0) end
+                    found = candidate
+                end
+            end
+            return found
+        end, nil, recoveryName .. ": waiting for your chest proximity prompt")
+        local reportStand = newRetryMonitor(recoveryName .. ": finding a safe position above the chest")
+        local stand, position
+        while not stand do
+            checkTarget()
+            local parent = prompt.Parent
+            position = parent:IsA("Attachment") and parent.WorldPosition
+                or parent:IsA("BasePart") and parent.Position or base.Position
+            local problem
+            stand, problem = chestTopPosition(chest, base, character, root, position, prompt.MaxActivationDistance)
+            if not stand then reportStand(problem); pause(CONFIG.General.ScanPoll) end
+        end
+        reportStand(nil, true)
+        local facing = Vector3.new(position.X, stand.Y, position.Z)
+        if (facing - stand).Magnitude < 0.001 then facing = stand + Vector3.new(0, 0, -1) end
+        root.CFrame = CFrame.new(stand, facing)
+        root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+        pause(CONFIG.Units.TeleportDelay)
+        checkTarget()
+        heldPrompt = prompt
+        prompt:InputHoldBegin()
+        -- Match the existing chest prompt hold behavior, then close as soon as its UI opens.
+        local ok, message = pcall(pause, math.max(prompt.HoldDuration, 2) + 0.5)
+        releaseInputs()
+        if not ok then error(message, 0) end
+    end
+    local function findClose(frame)
+        for _, names in ipairs({{"Content", "Actions", "Close"}, {"Content", "Actions", "CloseButton"},
+            {"CloseButton"}, {"ExitButton"}, {"Close"}}) do
+            local candidate = frame
+            for _, name in ipairs(names) do candidate = candidate and candidate:FindFirstChild(name) end
+            if candidate and visible(candidate) then
+                local button = resolveButton(candidate)
+                if button then return button end
+            end
+        end
+        local found
+        for _, candidate in ipairs(frame:GetDescendants()) do
+            local name = candidate.Name:lower():gsub("[%s%p]", "")
+            if candidate:IsA("GuiButton") and visible(candidate)
+                and (name == "close" or name == "closebutton" or name == "exit" or name == "exitbutton"
+                    or candidate:IsA("TextButton") and candidate.Text:match("^%s*[xX×]%s*$")) then
+                if found then error("Multiple chest close buttons found during " .. recoveryName .. ".", 0) end
+                found = candidate
+            end
+        end
+        return found
+    end
+    local closeAttempts = 0
+    local function closeChest()
+        checkTarget()
+        local frame = chestFrame()
+        if not visible(frame) then return end
+        local button = findClose(frame)
+        if not button then error(recoveryName .. ": chest Close button is not ready.", 0) end
+        if type(firesignal) ~= "function" then error("Chest closing needs firesignal.", 0) end
+        closeAttempts = closeAttempts + 1
+        if closeAttempts % 2 == 1 then firesignal(button.MouseButton1Click)
+        else firesignal(button.Activated, nil, 1) end
+    end
+    local ok, message = pcall(function()
+        triggerChest()
+        waitUntil(function()
+            checkTarget()
+            return visible(chestFrame())
+        end, nil, recoveryName .. ": waiting for the chest UI to open", triggerChest)
+        -- This interaction only resets the UI; it never requests chest contents.
+        pcall(closeChest)
+        waitUntil(function()
+            checkTarget()
+            return not visible(chestFrame())
+        end, nil, recoveryName .. ": closing the chest UI", closeChest)
+    end)
+    releaseInputs()
+    local stillCurrent = pcall(check)
+    if stillCurrent and player.Character == character and root:IsDescendantOf(character) then
+        pcall(function()
+            root.CFrame = savedCFrame
+            root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+        end)
+    end
+    if stillCurrent and ownsPosition and originalRoot == root and originalCFrame == savedCFrame then
+        originalRoot, originalCFrame = nil, nil
+    end
+    if not ok then error(message, 0) end
+end
+
+local function tryUnitExit(focus, method)
+    local object = focus:FindFirstChild("ExitButton")
+    if not object then error("ExitButton is missing from " .. focus:GetFullName(), 0) end
+    local exit, reason = resolveButton(object)
+    if not exit then error("Cannot activate ExitButton: " .. tostring(reason), 0) end
+    if not visible(exit) then error("ExitButton is hidden: " .. exit:GetFullName(), 0) end
+    if type(firesignal) ~= "function" then error("ExitButton signal activation needs firesignal.", 0) end
+    if method == "Activated" then firesignal(exit.Activated, nil, 1)
+    else firesignal(exit.MouseButton1Click) end
+end
+
+local function closeUnitPanel(operation, checkCurrent)
+    local methods = {"MouseButton1Click", "Activated"}
+    local reportRetry = newRetryMonitor(operation or "Closing unit panel with ExitButton")
+    local attempt, nextAttempt, hiddenSince, sawPanel = 0, 0, nil, false
+    while true do
+        checkAlive()
+        if checkCurrent then checkCurrent() end
+        local mine = playerGui:FindFirstChild("MineGui")
+        local focus = mine and mine:FindFirstChild("SlotFocusFrame")
+        if not visible(focus) then
+            if not sawPanel then reportRetry(nil, true); return end
+            hiddenSince = hiddenSince or os.clock()
+            if os.clock() - hiddenSince >= 0.1 then reportRetry(nil, true); return end
+        else
+            sawPanel, hiddenSince = true, nil
+            if os.clock() >= nextAttempt then
+                attempt = attempt + 1
+                local method = methods[(attempt - 1) % #methods + 1]
+                local ok, message = pcall(tryUnitExit, focus, method)
+                checkAlive()
+                if checkCurrent then checkCurrent() end
+                pause(SETTLE_TIME)
+                local currentMine = playerGui:FindFirstChild("MineGui")
+                local currentFocus = currentMine and currentMine:FindFirstChild("SlotFocusFrame")
+                if visible(currentFocus) then
+                    local recovered, recoveryMessage = pcall(recoverUnitPanelThroughChest, checkCurrent)
+                    checkAlive()
+                    if checkCurrent then checkCurrent() end
+                    currentMine = playerGui:FindFirstChild("MineGui")
+                    currentFocus = currentMine and currentMine:FindFirstChild("SlotFocusFrame")
+                    if visible(currentFocus) or not recovered then
+                        reportRetry(not recovered and recoveryMessage or (not ok and message)
+                            or ("Tried " .. method .. " and chest recovery; unit panel is still visible."))
+                    end
+                end
+                nextAttempt = os.clock() + CONFIG.General.RetryInterval
+            end
+        end
+        pause(CONFIG.General.WaitPoll)
+    end
+end
+
+-- Collect visible offline rewards before each startup teleport attempt.
+-- Only movement after TeleportButton is clicked confirms startup readiness.
+do
+    local startupReady = false
+    modules.gameReady = {
+        isReady = function() return startupReady end,
+        wait = function()
+            if startupReady then return true end
+            local nextAttempt = 0
+            local reportRetry = newRetryMonitor("Startup collection and teleport")
+            local pendingCharacter, pendingRoot, pendingPosition
+            local teleportFailed = false
+            local lastMessage
+            local function movedAfterClick()
+                return pendingPosition and player.Character == pendingCharacter
+                    and pendingRoot.Parent == pendingCharacter
+                    and pendingRoot:IsDescendantOf(workspace)
+                    and (pendingRoot.Position - pendingPosition).Magnitude > CONFIG.General.StartupTeleportMinDistance
+            end
+            local function confirmTeleport()
+                reportRetry(nil, true)
+                startupReady = true
+                logInfo("Startup", "TeleportButton changed character position; starting automation.")
+                return true
+            end
+            local function recoverTeleportUi()
+                -- Discard the failed click's baseline before moving to the chest.
+                -- Recovery movement must never confirm a TeleportButton click.
+                pendingCharacter, pendingRoot, pendingPosition = nil, nil, nil
+                pages.master.status.Text = "TeleportButton unavailable/unresponsive; refreshing the UI through your chest..."
+                footer.Text = pages.master.status.Text
+                local ok, message = pcall(recoverUnitPanelThroughChest, nil, "TeleportButton recovery")
+                if not ok and alive then reportRetry("TeleportButton chest recovery: " .. tostring(message)) end
+            end
+            local function attemptTeleport()
+                teleportFailed = false
+                local currentGui = player:FindFirstChildOfClass("PlayerGui")
+                if currentGui then playerGui = currentGui end
+                local mine = currentGui and currentGui:FindFirstChild("MineGui")
+                local offline = mine and mine:FindFirstChild("OfflineFrame")
+                if offline and visible(offline) then
+                    local content = offline:FindFirstChild("Content")
+                    local collect = content and content:FindFirstChild("CollectButton")
+                    assert(collect, "Offline CollectButton is not available yet.")
+                    clickButton(collect)
+                end
+                -- A dismissed/absent offline popup must not prevent further teleport retries.
+                task.wait(CONFIG.General.StartupCollectDelay)
+                checkAlive()
+                if movedAfterClick() then return true end
+                -- Capture the position AFTER collection and immediately BEFORE teleporting.
+                currentGui = player:FindFirstChildOfClass("PlayerGui")
+                if currentGui then playerGui = currentGui end
+                mine = currentGui and currentGui:FindFirstChild("MineGui")
+                local teleport = mine and mine:FindFirstChild("TeleportButton")
+                local character = player.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                assert(root and root:IsA("BasePart") and root:IsDescendantOf(workspace), "Character position is not available yet.")
+                teleportFailed = true
+                assert(teleport, "TeleportButton is not available yet.")
+                local before = root.Position
+                clickButton(teleport)
+                teleportFailed = false
+                checkAlive()
+                if player.Character == character and root.Parent == character then
+                    pendingCharacter, pendingRoot, pendingPosition = character, root, before
+                    nextAttempt = os.clock() + CONFIG.General.StartupTeleportClickInterval
+                    return movedAfterClick()
+                end
+                pendingCharacter, pendingRoot, pendingPosition = nil, nil, nil
+                return false
+            end
+            while alive do
+                checkAlive()
+                local character = player.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                if character ~= pendingCharacter or root ~= pendingRoot then
+                    pendingCharacter, pendingRoot, pendingPosition = nil, nil, nil
+                end
+                if movedAfterClick() then return confirmTeleport() end
+                if os.clock() >= nextAttempt then
+                    if pendingPosition then
+                        recoverTeleportUi()
+                        if not alive then return false end
+                    end
+                    nextAttempt = os.clock() + CONFIG.General.StartupTeleportClickInterval
+                    pages.master.status.Text = "Collecting offline rewards, then teleporting after 0.5 seconds..."
+                    footer.Text = pages.master.status.Text
+                    pages.master.run.Text = preferences.masterEnabled and "Master: ON - Waiting for teleport" or pages.master.runText
+                    minimizedMaster.Text = preferences.masterEnabled and "Master: Waiting" or "Master: OFF"
+                    local ok, result = pcall(attemptTeleport)
+                    if not alive then return false end
+                    if ok and result then return confirmTeleport() end
+                    local message
+                    if ok then
+                        message = "TeleportButton has not moved your character; retrying with chest UI recovery."
+                    else
+                        pendingCharacter, pendingRoot, pendingPosition = nil, nil, nil
+                        if teleportFailed then
+                            recoverTeleportUi()
+                            if not alive then return false end
+                        end
+                        message = "Startup retry: " .. tostring(result)
+                    end
+                    if message ~= lastMessage then
+                        logInfo("Startup", message)
+                        lastMessage = message
+                    end
+                    reportRetry(message)
+                    pages.master.status.Text = message
+                    footer.Text = message
+                end
+                task.wait(CONFIG.General.ScanPoll)
+            end
+            return false
+        end,
+    }
+end
+
+
 do
     local hotkeyActions = {[Enum.KeyCode.One] = minimizedActions.toggleMaster}
     local teleportKeys = {Enum.KeyCode.Three, Enum.KeyCode.Four, Enum.KeyCode.Five, Enum.KeyCode.Six}
@@ -1830,7 +2316,7 @@ do
     rollToggle.TextWrapped = true
     rollToggle.BackgroundColor3 = colors.idle
     local function setRollEnabled(enabled)
-        minimizedActions.rollToken = nil -- Invalidate first, even if task.cancel fails.
+        minimizedActions.rollToken = nil
         minimizedActions.rollEnabled = enabled
         if minimizedActions.rollWorker then pcall(task.cancel, minimizedActions.rollWorker) end
         minimizedActions.rollWorker = nil
@@ -1842,7 +2328,7 @@ do
         minimizedActions.rollWorker = task.defer(function()
             runScope.threads[coroutine.running()] = token
             while actionIsCurrent(token) do
-                -- Reacquire each tick so respawns/recreated panels do not leave a stale reference.
+
                 local roll = findPath(playerGui, {"MineGui", "EnchantFrame", "Bottom", "Stack", "RollButton"})
                 if roll and visible(roll) and roll:IsA("GuiButton") and roll.Active then
                     local ok, reason = pcall(clickButton, roll)
@@ -1884,7 +2370,7 @@ do
                 if name == "Petalfall Crate" then
                     local countLabel = content:FindFirstChild("ActualItemCount")
                     if not countLabel or not (countLabel:IsA("TextLabel") or countLabel:IsA("TextButton") or countLabel:IsA("TextBox")) then
-                        return nil -- The matching inventory row is still loading.
+                        return nil
                     end
                     local text = countLabel.Text:gsub("<[^>]*>", ""):gsub(",", "")
                     if text:match("^%s*$") then return nil end
@@ -1921,7 +2407,9 @@ do
                     openedInventory = true
                 end
                 waitUntil(function() return visible(inventory) end,
-                    CONFIG.Units.ActionTimeout, "The inventory did not open for crate counting.")
+                    CONFIG.Units.ActionTimeout, "Waiting for inventory to open for crate counting.", function()
+                        clickButton(path(playerGui, {"MineGui", "HotbarFrame", "Content", "Container", "InventoryButton"}))
+                    end)
                 pause(CONFIG.Units.UISettleTime)
                 local count = waitUntil(function()
                     if not visible(inventory) then error("Inventory closed before Petalfall Crates could be counted.", 0) end
@@ -1929,7 +2417,9 @@ do
                 end, CONFIG.Units.ActionTimeout, "Petalfall Crate count did not finish loading.")
                 clickButton(path(inventory, {"Content", "Actions", "Close"}))
                 waitUntil(function() return not visible(inventory) end,
-                    CONFIG.Units.ActionTimeout, "Inventory did not close before opening crates.")
+                    CONFIG.Units.ActionTimeout, "Waiting for inventory to close before opening crates.", function()
+                        clickButton(path(inventory, {"Content", "Actions", "Close"}))
+                    end)
                 openedInventory = false
                 if count == 0 then return "No Petalfall Crates found." end
                 local event = getGameEvent()
@@ -1979,11 +2469,10 @@ end
 do
     local cleanupWorker
     local function scanOtherPlots()
-        -- Keep the container: destroying it makes the game immediately recreate it.
-        -- Reacquire it each scan in case the game replaces it independently.
+
         local weather = workspace:FindFirstChild("WeatherFX_Local")
         if weather then weather:ClearAllChildren() end
-        -- Do not yield between resolving ownership and deleting another plot.
+
         local mineWorld = workspace:FindFirstChild("MineWorld")
         local plots = mineWorld and mineWorld:FindFirstChild("Plots")
         if not plots then return end
@@ -1995,13 +2484,13 @@ do
                 break
             end
         end
-        -- Ownership may arrive after the models. Never guess which plot is ours.
+
         if not myPlot then return end
         for _, plot in ipairs(children) do
             if not alive or not CONFIG.General.DeleteOtherPlots then return end
             if plot ~= myPlot and plot.Parent == plots and plot.Name:match("^MinePlot%d+$")
                 and tonumber(plot:GetAttribute("OwnerUserId")) ~= player.UserId then
-                plot:Destroy() -- Destroy also removes every descendant of this plot.
+                plot:Destroy()
             end
         end
     end
@@ -2028,6 +2517,273 @@ do
     }
 end
 
+-- Automatic Workspace cleanup runs once at the start of the first Master cycle, after startup teleport confirmation.
+-- It never polls or retries automatically; Run once remains a separate manual pass.
+-- Other MinePlots/weather use the independent automatic plotCleanup worker above.
+do
+    local runOnce = button(minimizedControls, "Workspace cleanup - Run once", UDim2.fromOffset(0, 104), UDim2.new(1, 0, 0, 26))
+    runOnce.Name, runOnce.TextSize = "WorkspaceCleanupRunOnce", 12
+    local status = label(minimizedControls, "Keeps script paths and prompts. Rejoin to restore.", UDim2.fromOffset(0, 134), UDim2.new(1, 0, 0, 18), 10)
+    status.Name, status.TextWrapped = "WorkspaceCleanupStatus", false
+    local running, completed = false, false
+    local automaticAttempted = false
+
+-- MAINTENANCE: Keep every Workspace path used anywhere in the script, including
+-- future stage paths. Add new paths here or to PLOT_KEEP before using them.
+-- These lists protect the full subtree of each leaf; prompts are also kept dynamically.
+local WORLD_KEEP = {
+    {"MineWorld", "BaseplateCollision"},
+    {"SellStand"},
+    {"PickaxesStand"},
+    {"EnchantAltar", "Altar"},
+    {"EventBoard", "Lectern"},
+}
+local PLOT_KEEP = {
+    {"Chest"},
+    {"Holders"},
+    {"Nodes"},
+    {"Mailbox"},
+    {"TrialStone", "Plinth1"},
+    {"PlatformBack"},
+    {"ZoneBoard"},
+}
+
+local function findOwnedPlot()
+    local world = workspace:FindFirstChild("MineWorld")
+    local plots = world and world:FindFirstChild("Plots")
+    if not plots then return nil, nil, "Waiting for MineWorld.Plots; nothing deleted." end
+    local mine
+    for _, candidate in ipairs(plots:GetChildren()) do
+        if candidate.Name:match("^MinePlot%d+$")
+            and tonumber(candidate:GetAttribute("OwnerUserId")) == player.UserId then
+            if mine then
+                return nil, nil, "Multiple owned plots found; cleanup paused."
+            end
+            mine = candidate
+        end
+    end
+    if not mine then return nil, nil, "Waiting for your owned MinePlot; nothing deleted." end
+    return plots, mine
+end
+
+-- An instance-keyed tree preserves ancestors without accidentally retaining
+-- unrelated siblings. Existing allowlisted prefixes are kept when a leaf has not streamed in.
+local function makeKeepTree(plots, plot)
+    local tree = { children = {} }
+    local function keep(object, subtree)
+        if not object or not object:IsDescendantOf(workspace) then return end
+        local chain = {}
+        local current = object
+        while current and current ~= workspace do
+            table.insert(chain, 1, current)
+            current = current.Parent
+        end
+        if current ~= workspace then return end
+        local node = tree
+        for _, ancestor in ipairs(chain) do
+            local nextNode = node.children[ancestor]
+            if not nextNode then
+                nextNode = { children = {} }
+                node.children[ancestor] = nextNode
+            end
+            node = nextNode
+        end
+        if subtree then node.all = true end
+    end
+    local function keepPath(root, names)
+        -- Preserve existing prefixes even when the leaf has not streamed in.
+        local parents = { root }
+        for index, name in ipairs(names) do
+            local nextParents = {}
+            for _, parent in ipairs(parents) do
+                for _, child in ipairs(parent:GetChildren()) do
+                    if child.Name == name then
+                        keep(child, index == #names)
+                        table.insert(nextParents, child)
+                    end
+                end
+            end
+            parents = nextParents
+        end
+    end
+
+    keep(plots, false)
+    keep(plot, false)
+    -- Other plots belong to the separate DeleteOtherPlots toggle/worker.
+    for _, candidate in ipairs(plots:GetChildren()) do
+        if candidate ~= plot and candidate.Name:match("^MinePlot%d+$") then keep(candidate, true) end
+    end
+    for _, names in ipairs(WORLD_KEEP) do keepPath(workspace, names) end
+    for _, names in ipairs(PLOT_KEEP) do keepPath(plot, names) end
+    keep(player.Character, true)
+    keep(workspace.CurrentCamera, true)
+    -- Keeping only the prompt is insufficient: deleting its part/model would
+    -- destroy the prompt too. keep() also protects every ancestor up to Workspace.
+    -- Include disabled prompts and discover newly spawned prompts on every scan.
+    for _, descendant in ipairs(workspace:GetDescendants()) do
+        if descendant:IsA("ProximityPrompt") then keep(descendant, true) end
+    end
+    -- Terrain is an engine object; do not Clear() its voxels or destroy it.
+    for _, child in ipairs(workspace:GetChildren()) do
+        if child:IsA("Terrain") then keep(child, true) end
+    end
+    -- Protect this script if executed as a LocalScript inside Workspace.
+    if typeof(script) == "Instance" then keep(script, true) end
+    return tree
+end
+
+local function scan(automatic)
+    local plots, plot, reason = findOwnedPlot()
+    if not plot then error(reason, 0) end
+    -- A character can briefly be in Workspace before Character is assigned.
+    -- Wait for a living character instead of risking deletion during respawn.
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not character or not character:IsDescendantOf(workspace)
+        or not humanoid or humanoid.Health <= 0 or not workspace.CurrentCamera then
+        error("Waiting for your character/camera; try cleanup again when ready.", 0)
+    end
+    local removed, failed = 0, 0
+    local tree = makeKeepTree(plots, plot)
+    local function prune(parent, node)
+        if node.all then return end
+        for _, child in ipairs(parent:GetChildren()) do
+            if not alive then error("Unloaded.", 0) end
+            if automatic and not CONFIG.General.WorkspaceCleanupEnabled then return end
+            local branch = node.children[child]
+            if branch then
+                prune(child, branch)
+            else
+                -- Recheck ownership immediately before each destructive action.
+                if plot.Parent ~= plots or tonumber(plot:GetAttribute("OwnerUserId")) ~= player.UserId then
+                    error("Plot ownership changed; cleanup paused.", 0)
+                end
+                local ok = pcall(function() child:Destroy() end)
+                if ok then removed = removed + 1 else failed = failed + 1 end
+            end
+        end
+    end
+    prune(workspace, tree)
+    return removed, failed
+end
+
+    local function refreshAutomaticStatus()
+        pages.master.refreshWorkspaceCleanupToggle()
+        if automaticAttempted then return end
+        status.Text = CONFIG.General.WorkspaceCleanupEnabled
+            and "Auto cleanup: once at the start of the first Master cycle."
+            or "Auto cleanup: OFF. Run once is available until used."
+        status.TextColor3 = colors.muted
+    end
+    modules.workspaceCleanup = {
+        refresh = refreshAutomaticStatus,
+        onMasterEnabled = function()
+            if preferences.masterActivatedOnce then return end
+            preferences.masterActivatedOnce = true
+            CONFIG.General.WorkspaceCleanupEnabled = true
+            refreshAutomaticStatus()
+        end,
+        onCycleStart = function(cycle)
+            if not alive or cycle ~= 1 or automaticAttempted or not CONFIG.General.WorkspaceCleanupEnabled then return end
+            automaticAttempted = true
+            local ok, removed, failed = pcall(scan, true)
+            if not alive then return end
+            if ok and failed == 0 then
+                status.Text = string.format("Auto cleanup done: removed %d branches.", removed)
+                status.TextColor3 = colors.success
+                logInfo("Workspace Cleanup", status.Text)
+            else
+                status.Text = "Auto cleanup incomplete. Use Run once to retry."
+                status.TextColor3 = colors.error
+                local reason = ok and string.format("%d branches could not be removed.", failed) or tostring(removed)
+                logWarning("[Workspace Cleanup] " .. reason)
+            end
+        end,
+    }
+
+    connect(runOnce.Activated, function()
+        if not alive or running or completed then return end
+        running = true
+        runOnce.Active, runOnce.AutoButtonColor = false, false
+        runOnce.Text = "Workspace cleanup - Running..."
+        local ok, removed, failed = pcall(scan)
+        running = false
+        if not alive then return end
+        if ok and failed == 0 then
+            completed = true
+            runOnce.Text = "Workspace cleanup - Done"
+            runOnce.BackgroundColor3 = colors.idle
+            status.Text = string.format("Removed %d branches. Rejoin to restore.", removed)
+            status.TextColor3 = colors.success
+            logInfo("Workspace Cleanup", status.Text)
+        else
+            runOnce.Active, runOnce.AutoButtonColor = true, true
+            runOnce.Text = "Workspace cleanup - Retry"
+            status.Text = "Cleanup incomplete. Try again when your plot is ready."
+            status.TextColor3 = colors.error
+            local reason = ok and string.format("Removed %d branches; %d failed.", removed, failed) or tostring(removed)
+            footer.Text = "Workspace cleanup: " .. reason
+            logWarning("[Workspace Cleanup] " .. reason)
+        end
+    end)
+end
+
+-- Start after the first Master cleanup check, including when cleanup is OFF.
+-- These features then use their own toggles and persist across Master stops.
+do
+    local started = false
+    local function saveRewardState()
+        if not savePreferences() then
+            logWarning("[Daily Rewards] Request sent, but its cache could not be saved; it may repeat after restarting.")
+        end
+    end
+    local function claimSpin()
+        if not alive or not preferences.dailySpinEnabled then return end
+        local lastSpin = preferences.lastDailySpinAt
+        if lastSpin and os.time() < lastSpin + CONFIG.DailyRewards.SpinInterval then return end
+        local event = getGameEvent()
+        if not alive or not preferences.dailySpinEnabled then return end
+        event:FireServer("MineDailySpin")
+        preferences.lastDailySpinAt = os.time()
+        saveRewardState()
+        logInfo("Daily Rewards", "Daily spin requested; next spin in 24 hours + 10 seconds.")
+    end
+    local function redeemCodes()
+        for _, code in ipairs(CONFIG.DailyRewards.Codes) do
+            if not alive or not preferences.autoRedeemEnabled then return end
+            if not preferences.redeemedCodes[code] then
+                local event = getGameEvent()
+                if not alive or not preferences.autoRedeemEnabled then return end
+                event:FireServer("UseCode", code)
+                -- FireServer has no reply; cache sent requests to avoid resending codes.
+                preferences.redeemedCodes[code] = true
+                saveRewardState()
+                logInfo("Daily Rewards", "Code redemption requested: " .. code)
+                task.wait(CONFIG.DailyRewards.CodeDelay)
+            end
+        end
+    end
+    modules.dailyRewards = {
+        start = function()
+            if started or not alive then return end
+            started = true
+            task.defer(function()
+                local thread = coroutine.running()
+                runScope.background[thread] = true
+                while alive do
+                    local ok, message = pcall(function()
+                        claimSpin()
+                        redeemCodes()
+                    end)
+                    if not ok and alive then logWarning("[Daily Rewards] " .. tostring(message)) end
+                    task.wait(ok and 1 or 15)
+                end
+                runScope.background[thread] = nil
+            end)
+        end,
+    }
+end
+
 local function checkPlot(plot)
     checkAlive()
     if not plot:IsDescendantOf(workspace)
@@ -2036,36 +2792,15 @@ local function checkPlot(plot)
     end
 end
 
-
 local function waitForZone(cachedZoneName)
-    local current = playerGui
-    local deadline = os.clock() + LOAD_TIMEOUT
-    for _, name in ipairs({"MineGui", "SkillTreeFullFrame", "Tree", "Canvas"}) do
-        if not alive then error("Unloaded.", 0) end
-        local remaining = deadline - os.clock()
-        if remaining <= 0 then
-            error("Timed out waiting for skill tree: " .. name, 0)
-        end
-        current = current:WaitForChild(name, remaining)
-        if not current then
-            error("Timed out waiting for skill tree: " .. name, 0)
-        end
-    end
-    local canvas = current
-    -- After opening the section, reacquire only the already selected zone.
-    -- This does not rescan or change the cached zone selection.
-    if cachedZoneName then
-        local remaining = deadline - os.clock()
-        if remaining <= 0 then error("Timed out waiting for cached zone " .. cachedZoneName, 0) end
-        local cachedZone = canvas:WaitForChild(cachedZoneName, remaining)
-        if not alive then error("Unloaded.", 0) end
-        if not cachedZone then error("Timed out waiting for cached zone " .. cachedZoneName, 0) end
-        return cachedZone
-    end
+    local canvas = path(playerGui, {"MineGui", "SkillTreeFullFrame", "Tree", "Canvas"})
+    if cachedZoneName then return path(canvas, {cachedZoneName}) end
+    local reportRetry = newRetryMonitor("Detecting the current Upgrades zone")
     local lastSignature = nil
     local stableSince = os.clock()
-    -- Wait for the zone list to settle, then choose by numeric suffix.
-    while alive and os.clock() < deadline do
+
+    while true do
+        checkAlive()
         if not canvas:IsDescendantOf(playerGui) then
             error("Skill tree Canvas was removed while detecting the zone.", 0)
         end
@@ -2089,28 +2824,45 @@ local function waitForZone(cachedZoneName)
             stableSince = os.clock()
         elseif highestZone and os.clock() - stableSince >= SETTLE_TIME then
             local zoneId = "Z" .. tostring(highestNumber)
-            
+
+            reportRetry(nil, true)
             return highestZone, zoneId
+        end
+        reportRetry("Canvas zone folders are missing or still changing.")
+        pause(CONFIG.General.ScanPoll)
+    end
+end
+
+local function openUpgrades()
+    local reportRetry = newRetryMonitor("Opening Upgrades UI")
+    local nextClick, attempted = 0, false
+    local lastProblem = "UpgradesButton is not available."
+    while true do
+        checkAlive()
+        local currentGui = player:FindFirstChildOfClass("PlayerGui")
+        if currentGui then playerGui = currentGui end
+        local mine = playerGui:FindFirstChild("MineGui")
+        local frame = mine and mine:FindFirstChild("SkillTreeFullFrame")
+        if visible(frame) then reportRetry(nil, true); return attempted end
+        if os.clock() >= nextClick then
+            local object = mine
+            for _, name in ipairs({"LeftBar", "Content", "Container", "UpgradesButton"}) do
+                object = object and object:FindFirstChild(name)
+            end
+            local target, reason = resolveButton(object)
+            if target and visible(target) and target.Active then
+                attempted = true
+                local ok, message = pcall(clickButton, target)
+                lastProblem = ok and "UpgradesButton was clicked, but SkillTreeFullFrame did not open."
+                    or tostring(message)
+            else
+                lastProblem = reason or "UpgradesButton is hidden or inactive."
+            end
+            reportRetry(lastProblem)
+            nextClick = os.clock() + math.max(CONFIG.General.RetryInterval, SETTLE_TIME)
         end
         pause(CONFIG.General.ScanPoll)
     end
-    if not alive then error("Unloaded.", 0) end
-    error("Timed out waiting for Canvas zone folders (Zone_Z<number>) to load and settle.", 0)
-end
-
-
-
-local function openUpgrades()
-    local mine = playerGui:FindFirstChild("MineGui")
-    local frame = mine and mine:FindFirstChild("SkillTreeFullFrame")
-    if visible(frame) then return false end
-    clickButton(path(playerGui, {"MineGui", "LeftBar", "Content", "Container", "UpgradesButton"}))
-    waitUntil(function()
-        local currentMine = playerGui:FindFirstChild("MineGui")
-        local currentFrame = currentMine and currentMine:FindFirstChild("SkillTreeFullFrame")
-        return visible(currentFrame)
-    end, LOAD_TIMEOUT, "UpgradesButton was clicked, but SkillTreeFullFrame did not open.")
-    return true
 end
 
 local function closeSkillTree()
@@ -2119,24 +2871,35 @@ local function closeSkillTree()
     if not visible(frame) then return end
     clickButton(path(frame, {"Footer", "Close"}))
     waitUntil(function() return not frame.Parent or not visible(frame) end,
-        LOAD_TIMEOUT, "Skill tree did not close after clicking Footer.Close.")
+        LOAD_TIMEOUT, "Waiting for skill tree to close after clicking Footer.Close.", function()
+            clickButton(path(frame, {"Footer", "Close"}))
+        end)
 end
 
-local cycleZoneId, cycleZoneName, cycleDensityLevel, cycleUpgradesComplete
+local cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady
 local cycleBestEquipped = false
 local readCycleDensity
+-- Keep the last confirmed scan across cycles, but start fresh on each script execution.
+local savedZoneScan
+local function useSavedZoneScan()
+    if not savedZoneScan then return false end
+    cycleZoneId, cycleZoneName, cycleDensityLevel = savedZoneScan.zoneId, savedZoneScan.zoneName, savedZoneScan.densityLevel
+    refreshMasterRequirements(cycleZoneId, cycleDensityLevel)
+    return true
+end
 local function getCycleZone()
+    if not cycleZoneId and activeStage ~= "upgrades" and not preferences.stages.upgrades then useSavedZoneScan() end
     if not cycleZoneId then
-        -- Canvas is created lazily: open the skill tree BEFORE scanning it.
+
         local opened = openUpgrades()
         local zone, zoneId = waitForZone()
         cycleZoneId, cycleZoneName = zoneId, zone.Name
-        -- Cache density during the same panel visit, including standalone stage runs.
+
         cycleDensityLevel = assert(readCycleDensity, "Density reader is not initialized.")(zone)
         refreshMasterRequirements(cycleZoneId, cycleDensityLevel)
         logUnitUpgradeDetail(string.format("%s (%s), density %d cached for this cycle.",
             cycleZoneId, cycleZoneName, cycleDensityLevel))
-        -- Standalone Required Units also needs a zone, then needs unobstructed prompts.
+
         if opened and activeStage ~= "upgrades" then
             closeSkillTree()
         end
@@ -2144,12 +2907,10 @@ local function getCycleZone()
     return cycleZoneId, cycleZoneName
 end
 
-
--- Retain confirmed Density II state across reruns, but every live scan can correct it.
-local densityIIState = _G.__MY_ANIME_FARM_DENSITY_II
+local densityIIState = _G.__AUTOMATION_DENSITY_II
 if type(densityIIState) ~= "table" then
     densityIIState = {}
-    _G.__MY_ANIME_FARM_DENSITY_II = densityIIState
+    _G.__AUTOMATION_DENSITY_II = densityIIState
 end
 local densityIIKey = tostring(game.GameId) .. ":" .. tostring(player.UserId)
 if type(densityIIState[densityIIKey]) ~= "table" then densityIIState[densityIIKey] = {} end
@@ -2157,6 +2918,7 @@ local densityIIZones = densityIIState[densityIIKey]
 local function cacheConfirmedDensity(zoneId, level)
     if zoneId == cycleZoneId then
         cycleDensityLevel = level
+        savedZoneScan = {zoneId = zoneId, zoneName = cycleZoneName, densityLevel = level}
         refreshMasterRequirements(zoneId, level)
     end
     local wasStopped = densityIIZones[zoneId] == true
@@ -2220,10 +2982,10 @@ local function splitUnitSlots(slots, RequiredUnitCount)
 end
 local unitCountSnapshot
 local cycleUnitsPreparedZone
-local cycleUnitUpgradeReadyZone -- Issued when the shared sequence starts; consumed by Upgrade Units.
-local lastUnitSequence = -math.huge -- One sequence timer, retained when Master is stopped/restarted.
-local unitSequenceZone -- Retained across cycles; only confirmed Upgrades detection resets the timer.
--- Event/cycle updates only: no extra timer, task, or per-frame connection.
+local cycleUnitUpgradeReadyZone
+local lastUnitSequence = -math.huge
+local unitSequenceZone
+
 refreshUnitCooldown = function()
     local seconds = math.max(0, math.ceil(CONFIG.Units.SequenceCooldown - (os.clock() - lastUnitSequence)))
     local text = seconds > 0
@@ -2264,7 +3026,7 @@ local function syncUnitSequenceZone(zoneId)
     if not previous or previous == zoneId then return end
     lastUnitSequence = -math.huge
     unitCountSnapshot, cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil, nil
-    masterRequirementProgress[zoneId] = {} -- Do not show stale progress after returning to a different zone.
+    masterRequirementProgress[zoneId] = {}
     refreshMasterRequirements(zoneId)
     lastStageSkip.units, lastStageSkip.mutation, lastStageSkip.upgradingUnit = nil, nil, nil
     refreshUnitCooldown()
@@ -2288,15 +3050,15 @@ local function readCharacterName(holder)
     if name == "" then return nil, "Pad.CrewInfo.BG.CharName is empty." end
     return name
 end
-local function requestCycleBestEquip(beforeUpgrade)
+local function requestCycleBestEquip()
     checkAlive()
-    -- Only the end-of-cycle request uses this guard; an early request is additional.
-    if not beforeUpgrade and cycleBestEquipped then return false end
+
+    if cycleBestEquipped then return false end
     local plot = getMyPlot()
     checkPlot(plot)
     checkAlive()
     getGameEvent():FireServer("MineEquipBest")
-    if not beforeUpgrade then cycleBestEquipped = true end -- Guard end requests before waiting, independently of early Equip Best.
+    cycleBestEquipped = true
     pause(CONFIG.Units.BestEquipDelay)
     if modules.mutation and modules.mutation.observeProgress and cycleZoneId then
         modules.mutation.observeProgress(cycleZoneId, plot)
@@ -2326,8 +3088,6 @@ local function RequiredUnitCountMet(zoneId)
     return true
 end
 
-
--- SELL: original chest / stand / Select All / Sell / Plot sequence.
 do
 local status = stageStatus("sell")
 local GameEvent, mineGui, hrp
@@ -2345,7 +3105,6 @@ local function sleepSell(seconds)
     return sellIsActive()
 end
 
--- Use one game button signal; firing all four signals can submit duplicate sales.
 local function clickBtn(btn)
     checkAlive()
     if not sellIsActive() or not btn or not visible(btn) then return false end
@@ -2355,13 +3114,49 @@ local function clickBtn(btn)
     return true
 end
 
-local function findByText(root, needle)
-    needle = needle:lower()
-    for _, d in ipairs(root:GetDescendants()) do
-        if d:IsA("GuiButton") and d.Visible then
-            local t = d:IsA("TextButton") and d.Text or ""
-            if (t .. " " .. d.Name):lower():find(needle) then return d end
+local function normalizedSellText(text)
+    return text:gsub("<[^>]*>", ""):lower():gsub("[^%w]", "")
+end
+local function findByText(root, needle, excluded)
+    needle = normalizedSellText(needle)
+    for _, candidate in ipairs(root:GetDescendants()) do
+        if candidate ~= excluded and candidate:IsA("GuiButton") and visible(candidate) and candidate.Active
+            and candidate.AbsoluteSize.X >= 1 and candidate.AbsoluteSize.Y >= 1 then
+            local text = candidate:IsA("TextButton") and candidate.Text or ""
+            if normalizedSellText(candidate.Name .. " " .. text):find(needle, 1, true) then return candidate end
+            -- ImageButtons and generic buttons can put their caption in a child label.
+            for _, child in ipairs(candidate:GetDescendants()) do
+                if (child:IsA("TextLabel") or child:IsA("TextButton")) and visible(child) then
+                    local owner = child:IsA("GuiButton") and child or child.Parent
+                    while owner and owner ~= candidate and not owner:IsA("GuiButton") do owner = owner.Parent end
+                    if owner == candidate and normalizedSellText(child.Text):find(needle, 1, true) then return candidate end
+                end
+            end
         end
+    end
+    return nil
+end
+local function waitForSellButton(root, text, excluded)
+    local reportRetry = newRetryMonitor("Finding Sell UI button: " .. text)
+    local nextDetails = 0
+    while sellIsActive() do
+        local target = findByText(root, text, excluded)
+        if target then reportRetry(nil, true); return target end
+        if os.clock() >= nextDetails then
+            local available = {}
+            for _, candidate in ipairs(root:GetDescendants()) do
+                if candidate:IsA("GuiButton") then
+                    local caption = candidate:IsA("TextButton") and candidate.Text or ""
+                    table.insert(available, string.format("%s [%s; visible=%s; active=%s; size=%gx%g]",
+                        candidate.Name, caption, tostring(visible(candidate)), tostring(candidate.Active),
+                        candidate.AbsoluteSize.X, candidate.AbsoluteSize.Y))
+                    if #available >= 10 then break end
+                end
+            end
+            reportRetry("Buttons found: " .. (#available > 0 and table.concat(available, "; ") or "none"))
+            nextDetails = os.clock() + CONFIG.General.RetryInterval
+        end
+        pause(CONFIG.General.WaitPoll)
     end
     return nil
 end
@@ -2380,52 +3175,85 @@ local function doSellOnce()
     GameEvent:FireServer("MineTeleport", "Hub")
     if not sleepSell(CONFIG.Sell.TeleportDelay) then return end
 
-    local sellStand = workspace:FindFirstChild("SellStand")
-    if not sellStand then error("SellStand is missing.", 0) end
-    local standPart = sellStand:IsA("BasePart") and sellStand
-        or (sellStand.PrimaryPart or sellStand:FindFirstChildWhichIsA("BasePart"))
-    if not standPart then error("SellStand has no BasePart.", 0) end
-    local standPos = standPart.Position
-    local facing = standPart.CFrame.LookVector
-    local standSpot = standPos - facing * CONFIG.Sell.StandDistance + Vector3.new(0, CONFIG.Sell.StandHeight, 0)
-    hrp.CFrame = CFrame.new(standSpot, standPos)
-    local cam = workspace.CurrentCamera
-    if cam then cam.CFrame = CFrame.new(standSpot + Vector3.new(0, CONFIG.Sell.CameraHeight, 0), standPos) end
-    if not sleepSell(CONFIG.Sell.StandDelay) then return end
-
+    local function visibleSellFrame()
+        mineGui = playerGui:FindFirstChild("MineGui")
+        local frame = mineGui and mineGui:FindFirstChild("SellFrame")
+        return visible(frame) and frame or nil
+    end
+    local lastRetryAngle
+    local function approachSellStand(isRetry)
+        if not sellIsActive() then return nil end
+        local sellStand = workspace:FindFirstChild("SellStand")
+        if not sellStand then error("SellStand is missing.", 0) end
+        local standPart = sellStand:IsA("BasePart") and sellStand
+            or (sellStand.PrimaryPart or sellStand:FindFirstChildWhichIsA("BasePart"))
+        if not standPart then error("SellStand has no BasePart.", 0) end
+        local character = player.Character
+        hrp = character and character:FindFirstChild("HumanoidRootPart")
+        if not hrp or not hrp:IsA("BasePart") then error("Character is not ready to return to the sell stand.", 0) end
+        local standPos = standPart.Position
+        local facing = standPart.CFrame.LookVector
+        local offset = Vector3.zero
+        if isRetry then
+            local angle = math.random(0, 359)
+            if angle == lastRetryAngle then angle = (angle + 1) % 360 end
+            lastRetryAngle = angle
+            local radians = math.rad(angle)
+            offset = Vector3.new(math.cos(radians), 0, math.sin(radians))
+        end
+        -- Each retry stays exactly one horizontal stud from the usual stand point.
+        local standSpot = standPos - facing * CONFIG.Sell.StandDistance + Vector3.new(0, CONFIG.Sell.StandHeight, 0) + offset
+        hrp.CFrame = CFrame.new(standSpot, standPos)
+        hrp.AssemblyLinearVelocity, hrp.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+        local cam = workspace.CurrentCamera
+        if cam then cam.CFrame = CFrame.new(standSpot + Vector3.new(0, CONFIG.Sell.CameraHeight, 0), standPos) end
+        if not sleepSell(CONFIG.Sell.StandDelay) then return nil end
+        return sellStand
+    end
+    local sellStand = approachSellStand()
+    if not sellStand then return end
     for _, d in ipairs(sellStand:GetDescendants()) do
-        if d:IsA("ProximityPrompt") then
+        if visibleSellFrame() then break end
+        if d:IsA("ProximityPrompt") and d.Enabled then
             heldPrompt = d
             pcall(function() d:InputHoldBegin() end)
-            pause(CONFIG.Sell.PromptHold)
+            pause(math.max(CONFIG.Sell.PromptHold, d.HoldDuration))
             pcall(function() d:InputHoldEnd() end)
             heldPrompt = nil
             if not sleepSell(CONFIG.Sell.PromptDelay) then return end
         end
     end
 
-    local sf = mineGui and mineGui:FindFirstChild("SellFrame")
-    if not sf then error("MineGui.SellFrame is missing.", 0) end
-    local t0 = tick()
-    while not sf.Visible and tick() - t0 < CONFIG.Sell.ShopTimeout do
-        if not alive then return end
-        pause(CONFIG.General.WaitPoll)
-    end
-    if not sf.Visible then sf.Visible = true end
+    status.Text = "Waiting for the game to open the sell window..."
+    local sf = waitUntil(visibleSellFrame, LOAD_TIMEOUT, "Waiting for Sell window after activating the stand prompt.", function()
+        sellStand = approachSellStand(true)
+        if not sellStand then return end
+        for _, prompt in ipairs(sellStand:GetDescendants()) do
+            checkAlive()
+            if not sellIsActive() or visibleSellFrame() then return end
+            if prompt:IsA("ProximityPrompt") and prompt.Enabled then
+                heldPrompt = prompt
+                prompt:InputHoldBegin()
+                pause(math.max(CONFIG.Sell.PromptHold, prompt.HoldDuration))
+                releaseInputs()
+                if not sleepSell(CONFIG.Sell.PromptDelay) then return end
+            end
+        end
+    end)
     if not sleepSell(CONFIG.Sell.ShopDelay) then return end
     status.Text = "Selecting and selling items..."
-    local sa = findByText(sf, "select all") or findByText(sf, "selectall")
-    if not sa or not clickBtn(sa) then error("Select All button is unavailable.", 0) end
+    local sa = waitForSellButton(sf, "Select All")
+    if not sellIsActive() then return end
+    if not sa or not clickBtn(sa) then error("Select All button became unavailable before clicking.", 0) end
     if not sleepSell(CONFIG.Sell.SelectAllDelay) then return end
-    local sb = findByText(sf, "sell")
-    if sb == sa then sb = nil end
-    if not sb or not clickBtn(sb) then error("Sell button is unavailable.", 0) end
+    local sb = waitForSellButton(sf, "Sell", sa)
+    if not sellIsActive() then return end
+    if not sb or not clickBtn(sb) then error("Sell button became unavailable before clicking.", 0) end
     if not sleepSell(CONFIG.Sell.SellDelay) then return end
     checkAlive()
     GameEvent:FireServer("MineTeleport", "Plot")
     if not sleepSell(CONFIG.Sell.TeleportDelay) then return end
 end
-
 
 modules.sell = {run = function()
     GameEvent = getGameEvent()
@@ -2437,8 +3265,6 @@ modules.sell = {run = function()
 end}
 end
 
-
--- PICKAXE: original durable per-ID request counts and highest-unlocked policy.
 do
 local status = stageStatus("pickaxe")
 local panel = pages.pickaxe.frame
@@ -2481,7 +3307,7 @@ local function readPickaxeCounts()
         or type(data.requestCounts) ~= "table" then
         error("Invalid pickaxe count file: " .. countFile .. ". No purchase sent.", 0)
     end
-    -- Older count files have no setting; retain their counts and default to 8.
+
     if data.maxPickaxes == nil then data.maxPickaxes = DEFAULT_MAX_PICKAXES end
     if not isValidQuantity(data.maxPickaxes) then
         error("Invalid maxPickaxes in " .. countFile .. ". No purchase sent.", 0)
@@ -2501,7 +3327,7 @@ local function savePickaxeData(data)
     local writeOk = pcall(writefile, countFile, encoded)
     local verifyOk, saved = pcall(readfile, countFile)
     if not writeOk or not verifyOk or saved ~= encoded then
-        -- A partial write is ambiguous. Block this UI until it is reloaded.
+
         countStorageError = "Cannot verify saved pickaxe counts. No purchase sent; reload after fixing storage."
         error(countStorageError, 0)
     end
@@ -2513,7 +3339,7 @@ local function reservePickaxe(id, unlimited)
     if not isValidQuantity(id) or id <= 0 then
         error("Invalid pickaxe ID. No purchase sent.", 0)
     end
-    -- Reload both the counts and limit before every purchase.
+
     local data = readPickaxeCounts()
     maxPickaxes = data.maxPickaxes
     if refreshCountsUI then refreshCountsUI(data) end
@@ -2526,8 +3352,6 @@ local function reservePickaxe(id, unlimited)
     return count + 1, nil, maxPickaxes
 end
 
-
--- Under the Master requirements card, above the zone selection controls.
 local unlimitedToggle = button(pages.master.frame, "", UDim2.new(0.5, 6, 0, 342), UDim2.new(0.5, -24, 0, 32))
 unlimitedToggle.Name, unlimitedToggle.TextSize = "UnlimitedBestPickaxeToggle", 12
 local function refreshUnlimitedToggle(locked)
@@ -2647,7 +3471,7 @@ local function tileState(tile)
     if not content or not content:IsA("GuiObject") then
         return nil, "BuyButton.Content is missing or is not a GuiObject"
     end
-    -- Read BackgroundColor3, not the upgrade script's realcolor attribute.
+
     local color = content.BackgroundColor3
     local r = math.floor(color.R * 255 + 0.5)
     local g = math.floor(color.G * 255 + 0.5)
@@ -2667,14 +3491,14 @@ local function isAvailable(state)
 end
 
 local function scanBestPickaxe(list)
-    local deadline = os.clock() + LOAD_TIMEOUT
+    local reportRetry = newRetryMonitor("Scanning the best Pickaxe")
     local previousTiles = nil
     local previousStates = nil
     local stableSince = os.clock()
     local problem = "No Tile children have loaded."
 
-    -- Wait for the tile list and button colors to settle before assigning IDs.
-    while alive and os.clock() < deadline do
+    while true do
+        checkAlive()
         if not list:IsDescendantOf(playerGui) then
             error("Pickaxe shop List was removed. Try again.", 0)
         end
@@ -2695,11 +3519,11 @@ local function scanBestPickaxe(list)
                     ready = false
                     problem = string.format("Pickaxe ID %d: %s", id, reason)
                 elseif isAvailable(state) then
-                    -- IDs increase during this forward scan; keep the highest green OR red ID.
+
                     bestId = id
                     bestTile = tile
                 end
-                -- Every Tile consumes an ID, including red, locked, or incomplete tiles.
+
                 id = id + 1
             end
         end
@@ -2723,11 +3547,12 @@ local function scanBestPickaxe(list)
                 previousStates = states
                 stableSince = os.clock()
             elseif os.clock() - stableSince >= SETTLE_TIME then
-                -- Print the stable ID/color mapping to help check the game's tile order.
+
                 for index, tile in ipairs(tiles) do
                     local color = tile.BuyButton.Content.BackgroundColor3
-                    
+
                 end
+                reportRetry(nil, true)
                 return bestId, bestTile
             end
             problem = "Pickaxe tiles or colors are still changing."
@@ -2736,10 +3561,9 @@ local function scanBestPickaxe(list)
             previousStates = nil
             stableSince = os.clock()
         end
+        reportRetry(problem)
         pause(CONFIG.General.ScanPoll)
     end
-    if not alive then error("Unloaded.", 0) end
-    error("Pickaxe scan timed out: " .. problem, 0)
 end
 
 local function applyMaxInput()
@@ -2753,7 +3577,7 @@ local function applyMaxInput()
     end
     busy = true
     local ok, result = pcall(function()
-        -- Preserve all existing counts, even when lowering the limit below them.
+
         local data = readPickaxeCounts()
         data.maxPickaxes = value
         savePickaxeData(data)
@@ -2777,61 +3601,194 @@ connect(maxInput.FocusLost, function()
     if alive and not busy then applyMaxInput() end
 end)
 
+local function openPickaxeShop(deadline)
+    local function shopWait(test, timeout, message, retryAction)
+        if not deadline then return waitUntil(test, timeout, message, retryAction) end
+        local expired = false
+        local result = waitUntil(function()
+            if os.clock() >= deadline then expired = true; return true end
+            return test()
+        end, timeout, message, retryAction)
+        if expired then error("Inter-cycle shop wait ended.", 0) end
+        return result
+    end
+    local function shopPath(parent, names)
+        if not deadline then return path(parent, names) end
+        for _, name in ipairs(names) do
+            parent = shopWait(function() return parent:FindFirstChild(name) end,
+                LOAD_TIMEOUT, "Missing pickaxe shop path component: " .. name)
+        end
+        return parent
+    end
+    local function shopPause(seconds)
+        if not deadline then return pause(seconds) end
+        pause(math.max(0, math.min(seconds, deadline - os.clock())))
+        if os.clock() >= deadline then error("Inter-cycle shop wait ended.", 0) end
+    end
 
--- Refresh the shop every pass so newly unlocked IDs are reflected in the scan.
--- Reacquire the live GUI after opening; purchase-count storage remains independent.
-local function refreshPickaxeShop()
-    -- Opening the live shop refreshes availability after zone/gold progression.
-    -- A persistent List instance alone does not mean its hidden colors are current.
     status.Text = "Refreshing the pickaxe shop..."
-    local stand = path(workspace, {"PickaxesStand"})
-    local prompt = stand:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if not prompt then error("PickaxesStand has no ProximityPrompt.", 0) end
-    local part = prompt.Parent
-    while part and part ~= stand and not part:IsA("BasePart") do part = part.Parent end
-    if not part or not part:IsA("BasePart") then
-        part = stand:IsA("BasePart") and stand or stand:FindFirstChildWhichIsA("BasePart", true)
-    end
-    if not part then error("PickaxesStand has no BasePart to teleport to.", 0) end
-    local character = waitUntil(function() return player.Character end, LOAD_TIMEOUT, "Character is missing.")
-    local root = path(character, {"HumanoidRootPart"})
+    local character = shopWait(function() return player.Character end, LOAD_TIMEOUT, "Character is missing.")
+    local root = shopPath(character, {"HumanoidRootPart"})
     originalRoot, originalCFrame = root, root.CFrame
-    local position = prompt.Parent:IsA("Attachment") and prompt.Parent.WorldPosition or part.Position
-    local distance = math.min(CONFIG.Pickaxe.StandDistance, math.max(0.5, prompt.MaxActivationDistance * 0.5))
-    root.CFrame = CFrame.new(position - part.CFrame.LookVector * distance + Vector3.new(0, CONFIG.Pickaxe.StandHeight, 0), position)
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
-    pause(CONFIG.Pickaxe.ShopTeleportDelay)
-    if not player.Character or not root:IsDescendantOf(player.Character) then
-        error("Character changed while opening the pickaxe shop. Run again after respawning.", 0)
-    end
-    waitUntil(function() return prompt.Parent and prompt.Enabled end,
-        LOAD_TIMEOUT, "PickaxesStand proximity prompt is disabled.")
-    heldPrompt = prompt
-    prompt:InputHoldBegin()
-    pause(math.max(prompt.HoldDuration, CONFIG.Pickaxe.MinimumPromptHold) + CONFIG.Pickaxe.PromptHoldPadding)
-    releaseInputs()
-    local shop = waitUntil(function()
+    local lastRetryAngle
+    local function visibleShop()
         local mine = playerGui:FindFirstChild("MineGui")
         local current = mine and mine:FindFirstChild("PickaxeShopFrame")
         return visible(current) and current or nil
-    end, LOAD_TIMEOUT, "Pickaxe shop did not open after activating its proximity prompt.")
-    local list = path(shop, {"List"}) -- Resolve AFTER opening: the game can replace it.
-    waitUntil(function() return list:FindFirstChild("Tile") end,
+    end
+    local function approachPickaxeStand(isRetry)
+        checkAlive()
+        if not player.Character or not root:IsDescendantOf(player.Character) then
+            error("Character changed while opening the pickaxe shop. Run again after respawning.", 0)
+        end
+        local stand = shopPath(workspace, {"PickaxesStand"})
+        local prompt = stand:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if not prompt then error("PickaxesStand has no ProximityPrompt.", 0) end
+        local part = prompt.Parent
+        while part and part ~= stand and not part:IsA("BasePart") do part = part.Parent end
+        if not part or not part:IsA("BasePart") then
+            part = stand:IsA("BasePart") and stand or stand:FindFirstChildWhichIsA("BasePart", true)
+        end
+        if not part then error("PickaxesStand has no BasePart to teleport to.", 0) end
+        local position = prompt.Parent:IsA("Attachment") and prompt.Parent.WorldPosition or part.Position
+        local distance = math.min(CONFIG.Pickaxe.StandDistance, math.max(0.5, prompt.MaxActivationDistance * 0.5))
+        local offset = Vector3.zero
+        if isRetry then
+            local angle = math.random(0, 359)
+            if angle == lastRetryAngle then angle = (angle + 1) % 360 end
+            lastRetryAngle = angle
+            local radians = math.rad(angle)
+            offset = Vector3.new(math.cos(radians), 0, math.sin(radians))
+        end
+        root.CFrame = CFrame.new(position - part.CFrame.LookVector * distance + Vector3.new(0, CONFIG.Pickaxe.StandHeight, 0) + offset, position)
+        root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+        shopPause(CONFIG.Pickaxe.ShopTeleportDelay)
+        if not player.Character or not root:IsDescendantOf(player.Character) then
+            error("Character changed while opening the pickaxe shop. Run again after respawning.", 0)
+        end
+        return prompt
+    end
+    local prompt = approachPickaxeStand()
+    shopWait(function() return visibleShop() or (prompt.Parent and prompt.Enabled) end,
+        LOAD_TIMEOUT, "PickaxesStand proximity prompt is disabled.", function() prompt = approachPickaxeStand(true) end)
+    local function activateStand(isRetry)
+        if visibleShop() then return end
+        if isRetry then prompt = approachPickaxeStand(true) end
+        if visibleShop() or not prompt.Parent or not prompt.Enabled then return end
+        heldPrompt = prompt
+        prompt:InputHoldBegin()
+        shopPause(math.max(prompt.HoldDuration, CONFIG.Pickaxe.MinimumPromptHold) + CONFIG.Pickaxe.PromptHoldPadding)
+        releaseInputs()
+    end
+    activateStand(false)
+    local shop = shopWait(visibleShop, LOAD_TIMEOUT,
+        "Waiting for Pickaxe shop to open after activating its proximity prompt.", function() activateStand(true) end)
+    local list = shopPath(shop, {"List"})
+    shopWait(function() return list:FindFirstChild("Tile") end,
         LOAD_TIMEOUT, "Pickaxe shop opened, but no Tile children loaded.")
-    pause(SETTLE_TIME)
+    shopPause(SETTLE_TIME)
+    return shop
+end
+
+local function refreshPickaxeShop()
+    local shop = openPickaxeShop()
     status.Text = "Closing the refreshed pickaxe shop..."
     clickButton(path(shop, {"Close"}))
     waitUntil(function() return not visible(shop) end,
-        LOAD_TIMEOUT, "Pickaxe shop did not close after clicking Close.")
+        LOAD_TIMEOUT, "Waiting for Pickaxe shop to close after clicking Close.", function() clickButton(path(shop, {"Close"})) end)
     restorePosition()
 end
 
+local waitingAtPickaxeShop = false
+
+local function clickWaitingBuyButton(button, deadline)
+    checkAlive()
+    local started = os.clock()
+    if started >= deadline then return nil end
+    local size = button.AbsoluteSize
+    if size.X <= 0 or size.Y <= 0 then return nil end
+
+    local inset = GuiService:GetGuiInset()
+    local center = button.AbsolutePosition + size * 0.5 + inset
+    local point = Vector2.new(math.round(center.X), math.round(center.Y))
+    mouseHeld = point
+    VIM:SendMouseButtonEvent(point.X, point.Y, 0, true, game, 0)
+    pause(math.max(0, math.min(0.05, deadline - os.clock())))
+    releaseInputs()
+    return started
+end
+
+local function cleanupWaitingShop()
+    if not waitingAtPickaxeShop then return end
+    waitingAtPickaxeShop = false
+    releaseInputs()
+    local mine = playerGui:FindFirstChild("MineGui")
+    local shop = mine and mine:FindFirstChild("PickaxeShopFrame")
+    if shop and shop:IsA("GuiObject") then
+        local close = shop:FindFirstChild("Close")
+        if visible(shop) and close then pcall(clickButton, close) end
+
+        if shop.Parent then shop.Visible = false end
+    end
+    releaseInputs()
+    restorePosition()
+end
+
+local function waitAtPickaxeShop(seconds)
+    local deadline = os.clock() + math.max(0, seconds)
+    if os.clock() >= deadline then return end
+    waitingAtPickaxeShop = true
+    if modules.idleClick then modules.idleClick.stop() end
+    local ok, problem = pcall(function()
+        openPickaxeShop(deadline)
+        while os.clock() < deadline do
+            checkAlive()
+            local clicked = false
+            for layoutOrder = 1, 2 do
+
+                local mine = playerGui:FindFirstChild("MineGui")
+                local shop = mine and mine:FindFirstChild("PickaxeShopFrame")
+                if not visible(shop) then error("Pickaxe shop closed while waiting.", 0) end
+                local list = shop:FindFirstChild("List")
+                if list then
+                    for _, tile in ipairs(list:GetChildren()) do
+                        checkAlive()
+                        if os.clock() >= deadline then return end
+                        if tile.Name == "Tile" and tile:IsA("GuiObject") and tile.LayoutOrder == layoutOrder then
+                            local button = tile:FindFirstChild("BuyButton")
+                            if button and button:IsA("GuiButton") and visible(button) then
+                                local clickedAt = clickWaitingBuyButton(button, deadline)
+                                if clickedAt then
+                                    clicked = true
+                                    local nextClick = math.min(clickedAt + CONFIG.Pickaxe.WaitingClickDelay, deadline)
+                                    if nextClick > os.clock() then pause(nextClick - os.clock()) end
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if not clicked then
+                pause(math.max(0, math.min(CONFIG.General.ScanPoll, deadline - os.clock())))
+            end
+        end
+    end)
+    cleanupWaitingShop()
+    checkAlive()
+    if not ok and os.clock() < deadline then logWarning("[Pickaxe wait] " .. tostring(problem)) end
+    local remaining = deadline - os.clock()
+    if remaining > 0 then pause(remaining) end
+end
+
 modules.pickaxe = {
+    waitBetweenCycles = waitAtPickaxeShop,
+    cleanupWaiting = cleanupWaitingShop,
+    isWaiting = function() return waitingAtPickaxeShop end,
     run = function()
         refreshPickaxeShop()
-            -- Resolve the remote before scanning so no loading waits occur
-            -- between selecting an available tile and sending the purchase request.
+
             local event = getGameEvent()
             if not event:IsA("RemoteEvent") then
                 error("Remotes.GamestateEvent is not a RemoteEvent.", 0)
@@ -2844,8 +3801,7 @@ modules.pickaxe = {
             if not id then
                 return "Cannot buy the best pickaxe at the moment."
             end
-            -- Check the saved limit before checking whether this pickaxe is green.
-            -- This is read-only: a red button must not consume a saved slot.
+
             local data = readPickaxeCounts()
             maxPickaxes = data.maxPickaxes
             maxInput.Text = tostring(maxPickaxes)
@@ -2858,23 +3814,21 @@ modules.pickaxe = {
             if tile.Parent ~= list or selectedState ~= "buyable" then
                 return "Cannot buy the best pickaxe at the moment."
             end
-            
-            -- Recheck the limit and save a slot only after the green check passes.
+
             local count, limitCount, limit = reservePickaxe(id, CONFIG.Pickaxe.UnlimitedBestPickaxe)
             maxInput.Text = tostring(limit)
             if not count then
                 return string.format("Pickaxe ID %d: limit reached (%d/%d).", id, limitCount, limit)
             end
-            -- Keep the reservation if unloaded or if sending fails: never refund
-            -- an uncertain request, because it may already have reached the server.
+
             if not alive then return "Unloaded; saved slot retained." end
-            -- File saving can take time; check green again immediately before sending.
+
             if tile.Parent ~= list or tileState(tile) ~= "buyable" then
                 return "Cannot buy the best pickaxe at the moment."
             end
             checkAlive()
             event:FireServer("MineBuyPickaxe", id)
-            
+
             if CONFIG.Pickaxe.UnlimitedBestPickaxe then
                 return string.format("ID %d: request sent. Saved %d requests; best-pickaxe buy limit disabled.", id, count)
             end
@@ -2889,7 +3843,7 @@ modules.pickaxe = {
         refreshUnlimitedToggle(value)
     end,
 }
--- Load the saved setting and persist the default for new/older count files.
+
 local settingsOk, settingsError = pcall(function()
     local data = readPickaxeCounts()
     savePickaxeData(data)
@@ -2910,26 +3864,17 @@ end
 
 end
 
-
--- UPGRADES: original category mapping, density policy and request limits.
 do
 local status = stageStatus("upgrades")
 local UPGRADE_DELAY = CONFIG.Upgrades.RequestDelay
-local MAX_UPGRADE_REQUESTS = CONFIG.Upgrades.MaxRequestsPerNodePerCycle
 local ROW_SCALE_TOLERANCE = CONFIG.Upgrades.RowScaleTolerance
 assert(type(ROW_SCALE_TOLERANCE) == "number" and ROW_SCALE_TOLERANCE == ROW_SCALE_TOLERANCE
     and ROW_SCALE_TOLERANCE >= 0 and ROW_SCALE_TOLERANCE < math.huge,
     "CONFIG.Upgrades.RowScaleTolerance must be a finite nonnegative number.")
 
--- CONFIG: base node name -> third argument of MineBuySkill.
--- Omit "Node_" and the trailing level number. Each entry covers ALL levels.
--- Example: Fracture covers Node_Fracture1, Node_Fracture2, etc.
--- Names missing from this config use their own base name as argument 3.
--- Example: Node_Unearth3 uses "Unearth" unless overridden here.
--- Empty or invalid configured values are logged as errors and skipped.
 local NODE_CATEGORIES = CONFIG.Upgrades.NodeCategories
 local function nodeState(node)
-    -- The supplied path ends in Content, so check its attribute first.
+
     local content = node:FindFirstChild("Content")
     if not content then return nil, "Content is missing" end
     local color = content:GetAttribute("realcolor")
@@ -2939,7 +3884,7 @@ local function nodeState(node)
     if typeof(color) ~= "Color3" then
         return nil, "realcolor is missing or is not a Color3"
     end
-    -- Color3 channels use 0..1; round back to the supplied RGB values.
+
     local r = math.floor(color.R * 255 + 0.5)
     local g = math.floor(color.G * 255 + 0.5)
     local b = math.floor(color.B * 255 + 0.5)
@@ -2950,22 +3895,21 @@ local function nodeState(node)
     elseif r == 52 and g == 52 and b == 60 then
         return "locked"
     elseif r == 114 and g == 118 and b == 132 then
-        -- Retain the original gray as a recognized, non-upgraded state.
+
         return "not_upgraded"
     end
     return nil, string.format("unrecognized realcolor (%d, %d, %d)", r, g, b)
 end
 
 local function scanDensity(zone)
-    local deadline = os.clock() + LOAD_TIMEOUT
+    local reportRetry = newRetryMonitor("Scanning Density for " .. zone.Name)
     local lastSignature = nil
     local stableSince = os.clock()
     local problem = "No Node_Density nodes have loaded."
 
-    -- Wait for nodes, Content, and their attributes, including nodes that
-    -- arrive shortly after the selected zone. Never treat missing data as level 0.
-    while alive and os.clock() < deadline do
-        -- Reacquire the same zone from Canvas on every poll; the UI may rebuild it.
+    while true do
+        checkAlive()
+
         zone = waitForZone(zone.Name)
         local entries = {}
         local level = 0
@@ -2980,9 +3924,9 @@ local function scanDensity(zone)
                     ready = false
                     problem = node.Name .. ": " .. reason
                 else
-                    -- Node_DensityN represents level N; an unsuffixed node is 1.
+
                     local nodeLevel = tonumber(suffix) or 1
-                    -- Available and locked nodes do not increase the level.
+
                     if state == "upgraded" then level = math.max(level, nodeLevel) end
                     table.insert(entries, node.Name .. ":" .. state)
                 end
@@ -3003,6 +3947,7 @@ local function scanDensity(zone)
                     cacheConfirmedDensity(cycleZoneId, level)
                     if activeStage == "upgrades" then minimizedActions.hideTutorial(cycleZoneId, level) end
                 end
+                reportRetry(nil, true)
                 return level, zone
             end
             problem = "Density nodes are still changing."
@@ -3010,10 +3955,9 @@ local function scanDensity(zone)
             lastSignature = nil
             stableSince = os.clock()
         end
+        reportRetry(problem)
         pause(CONFIG.General.ScanPoll)
     end
-    if not alive then error("Unloaded.", 0) end
-    error("Density scan timed out: " .. problem, 0)
 end
 
 readCycleDensity = scanDensity
@@ -3045,7 +3989,12 @@ local function densityUpgradeReady(zoneId, nodeName)
     end
     return ready
 end
-local function notifyColossusUpgrade()
+local notificationsInFlight = {maxZone = {}, colossus = {}}
+local function notifyUpgradeMilestone(kind, zoneId, pips)
+    if not zoneId then return end
+    local sent = preferences.discordNotifications[kind]
+    local pending = notificationsInFlight[kind]
+    if sent[zoneId] or pending[zoneId] then return end
     local webhookUrl = CONFIG.Upgrades.DiscordWebhookUrl
     if not webhookUrl:find("%S") then return end
     if type(request) ~= "function" then
@@ -3053,21 +4002,68 @@ local function notifyColossusUpgrade()
         return
     end
 
+    local rule = CONFIG.Units.RequiredByZone[zoneId]
+    local zoneName = (rule and rule.DisplayName) or zoneId
+    local content
+    if kind == "maxZone" then
+        content = string.format("**%s** reached **MAX zone: %s (%s)**!", player.Name, zoneName, zoneId)
+    else
+        content = string.format("**%s** unlocked **Colossus** in **%s (%s)**!\nColossus progress: **%s**.",
+            player.Name, zoneName, zoneId, pips)
+    end
+    local elapsed = math.max(0, os.time() - preferences.firstLoadedAt)
+    local elapsedText = "unknown"
+    if elapsed >= 3600 then
+        local days = math.floor(elapsed / 86400)
+        local hours = math.floor((elapsed % 86400) / 3600)
+        local minutes = math.floor((elapsed % 3600) / 60)
+        elapsedText = string.format("%dh %02dm %02ds", hours, minutes, elapsed % 60)
+        if days > 0 then elapsedText = tostring(days) .. "d " .. elapsedText end
+    end
+    content = content .. "\nTime since first script load: **" .. elapsedText .. "**. @everyone"
+    pending[zoneId] = true
     task.spawn(function()
+        local thread = coroutine.running()
+        runScope.background[thread] = true
         local ok, response = pcall(function()
             return request({
                 Url = webhookUrl,
                 Method = "POST",
                 Headers = {["Content-Type"] = "application/json"},
                 Body = HttpService:JSONEncode({
-                    content = player.Name .. " - Colossus reached!",
+                    content = content,
+                    allowed_mentions = {parse = {"everyone"}},
                 }),
             })
         end)
-        if not ok or not response or not response.Success then
-            logWarning("[Upgrades] Colossus Discord notification failed.")
+        local statusCode = type(response) == "table" and tonumber(response.StatusCode)
+        if ok and type(response) == "table"
+            and ((statusCode and statusCode >= 200 and statusCode < 300)
+                or (not statusCode and response.Success == true)) then
+            sent[zoneId] = true
+            if not savePreferences() then
+                logWarning("[Upgrades] Discord notification sent, but its cache could not be saved; it may repeat after restarting.")
+            end
+        else
+            logWarning("[Upgrades] " .. kind .. " Discord notification failed for " .. zoneId .. ".")
         end
+        pending[zoneId] = nil
+        runScope.background[thread] = nil
     end)
+end
+
+local function isMaxZone(zoneId)
+    local maxZoneId, maxZoneNumber = nil, 0
+    for configuredZoneId in pairs(CONFIG.Units.RequiredByZone) do
+        local number = tonumber(configuredZoneId:match("^Z(%d+)$"))
+        if number and number > maxZoneNumber then
+            maxZoneId, maxZoneNumber = configuredZoneId, number
+        end
+    end
+    return maxZoneId ~= nil and zoneId == maxZoneId
+end
+local function notifyMaxZoneReached(zoneId)
+    if isMaxZone(zoneId) then notifyUpgradeMilestone("maxZone", zoneId) end
 end
 
 local function reachedColossusPips(zone)
@@ -3080,25 +4076,50 @@ local function reachedColossusPips(zone)
     if not countText then return nil end
     local count, maximum = tonumber(countText), tonumber(maxText)
     if count >= 1 and count <= maximum and maximum < math.huge then
-        return countText .. "/" .. maxText
+        local progress = countText .. "/" .. maxText
+        notifyUpgradeMilestone("colossus", zone.Name:match("^Zone_(Z%d+)$"), progress)
+        return progress
     end
     return nil
 end
 
-local function saveColossusStageToggles(pips)
+local function colossusPipsUnlocked(pips)
+    if type(pips) ~= "string" then return false end
+    local countText, maxText = pips:match("^%s*(%d+)%s*/%s*(%d+)%s*$")
+    local count, maximum = tonumber(countText), tonumber(maxText)
+    return count ~= nil and maximum ~= nil and maximum > 0 and maximum < math.huge and count >= 1 and count <= maximum
+end
+local function shouldStopForColossus(zoneId, pips)
+    return colossusPipsUnlocked(pips)
+end
+local function saveColossusStageToggles(zoneId, pips)
+    local atMaxZone = isMaxZone(zoneId)
+    local complete = colossusPipsUnlocked(pips)
+    local changed = false
     for index = 3, 7 do
         local id = order[index]
-        preferences.stages[id] = false
-        stageRows[id].Text = tostring(index) .. ". " .. pages[id].name .. " / OFF"
+        local enabled = not complete
+        if preferences.stages[id] ~= enabled then changed = true end
+        preferences.stages[id] = enabled
+        stageRows[id].Text = tostring(index) .. ". " .. pages[id].name .. (enabled and " / Waiting" or " / OFF")
         stageRows[id].TextColor3 = colors.muted
     end
-    CONFIG.Pickaxe.UnlimitedBestPickaxe = true
-    local saved = savePreferences()
+    if CONFIG.Pickaxe.UnlimitedBestPickaxe ~= atMaxZone then
+        CONFIG.Pickaxe.UnlimitedBestPickaxe = atMaxZone
+        changed = true
+    end
+    local saved = not changed or savePreferences()
     refreshStageToggles(busy)
     modules.pickaxe.setBusy(busy)
 
-    local result = "Colossus Pips " .. pips .. ". Stages 3-7 OFF. Unlimited Best Pickaxe ON."
-    return result .. (saved and " Preferences saved." or " Preference save could not be verified.")
+    local result = zoneId .. ": Colossus Pips " .. (pips or "not reached")
+        .. (atMaxZone and "; max zone reached." or "; max zone not reached.")
+        .. (complete and " Stages 3-7 OFF." or " Stages 3-7 ON.")
+        .. (atMaxZone and " Unlimited Best Pickaxe ON." or " Unlimited Best Pickaxe OFF.")
+    if changed then
+        result = result .. (saved and " Preferences saved." or " Preference save could not be verified.")
+    end
+    return result, complete
 end
 
 local function upgradeNode(zone, nodeName, zoneId)
@@ -3113,13 +4134,15 @@ local function upgradeNode(zone, nodeName, zoneId)
     local event = getGameEvent()
     local requests = 0
     local colossusPips
-    local stopReason = "request cap reached"
-    for _ = 1, MAX_UPGRADE_REQUESTS do
+    local stopReason
+    local reportRetry = newRetryMonitor("Buying upgrade " .. nodeName .. " in " .. zoneId)
+    while true do
+        checkAlive()
         if not alive then error("Unloaded.", 0) end
-        zone = waitForZone(zone.Name) -- Reacquire if Canvas was rebuilt.
+        zone = waitForZone(zone.Name)
         colossusPips = reachedColossusPips(zone)
-        if colossusPips then break end
-        -- Reacquire before every request in case the game rebuilds the tree.
+        if shouldStopForColossus(zoneId, colossusPips) then break end
+
         local node = zone:FindFirstChild(nodeName)
         if not node then
             stopReason = "node was removed"
@@ -3132,26 +4155,22 @@ local function upgradeNode(zone, nodeName, zoneId)
         end
         local densityTarget = tonumber(nodeName:match("^Node_Density(%d+)$"))
         if densityTarget == 2 and not densityUpgradeReady(zoneId, nodeName) then
-            break -- Recheck the live required lineup before EVERY Density II request.
+            break
         end
-        status.Text = string.format("Upgrading %s: %d/%d", nodeName, requests + 1, MAX_UPGRADE_REQUESTS)
+        status.Text = string.format("Upgrading %s: request %d", nodeName, requests + 1)
         checkAlive()
         event:FireServer("MineBuySkill", zoneId, category, skillId)
         requests = requests + 1
-        if baseName == "Colossus" then
-            notifyColossusUpgrade()
-        end
-        
-        -- FireServer does not acknowledge a purchase. Wait for the displayed
-        -- realcolor to update before deciding whether to send another request.
+        reportRetry("Node remains available after " .. requests .. " requests.")
         pause(UPGRADE_DELAY)
     end
+    reportRetry(nil, true)
     if not alive then error("Unloaded.", 0) end
     local current = zone:FindFirstChild(nodeName)
     if current and nodeState(current) == "upgraded" then
-        
+
     end
-    
+
     return requests, colossusPips
 end
 
@@ -3172,14 +4191,13 @@ local function upgradeNodes(zone, densityLevel, zoneId)
 
     local attempted = {}
     local lastPolicy = nil
-    while alive and not colossusPips do
+    while alive and not shouldStopForColossus(zoneId, colossusPips) do
         zone = waitForZone(zone.Name)
-        -- Reevaluate density after EVERY completed node, before selecting
-        -- another node. A newly red next density always takes priority.
+
         status.Text = "Refreshing " .. zone.Name .. " density..."
         densityLevel, zone = scanDensity(zone)
         colossusPips = reachedColossusPips(zone)
-        if colossusPips then break end
+        if shouldStopForColossus(zoneId, colossusPips) then break end
         local highestDensityLevel = 0
         for _, node in ipairs(zone:GetChildren()) do
             local suffix = node.Name:match("^Node_Density(%d*)$")
@@ -3188,14 +4206,14 @@ local function upgradeNodes(zone, densityLevel, zoneId)
             end
         end
         local maxed = densityLevel > 0 and densityLevel == highestDensityLevel
-        -- When maxed, all other red nodes qualify without position priority.
+
         local referenceLevel = maxed and densityLevel or (densityLevel + 1)
         local referenceName = "Node_Density" .. tostring(referenceLevel)
         local reference = zone:FindFirstChild(referenceName)
         if not reference and referenceLevel == 1 then
             reference = zone:FindFirstChild("Node_Density")
         end
-        if not reference then reference = zone:WaitForChild(referenceName, LOAD_TIMEOUT) end
+        if not reference then reference = path(zone, {referenceName}) end
         if not alive then error("Unloaded.", 0) end
         if not reference or not reference:IsA("GuiObject") then
             error("Cannot read density reference Position: " .. referenceName, 0)
@@ -3206,9 +4224,9 @@ local function upgradeNodes(zone, densityLevel, zoneId)
         local policy = tostring(densityLevel) .. ":" .. tostring(maxed) .. ":" .. referenceName
         if policy ~= lastPolicy then
             if maxed then
-                
+
             else
-                
+
             end
             lastPolicy = policy
         end
@@ -3216,7 +4234,7 @@ local function upgradeNodes(zone, densityLevel, zoneId)
         local densityAllowed = maxed or referenceLevel ~= 2 or densityUpgradeReady(zoneId, referenceName)
         if not maxed and densityAllowed and not attempted[referenceName] and nodeState(reference) == "available" then
             attempted[referenceName] = true
-            
+
             process(referenceName)
         else
             local candidates = {}
@@ -3227,9 +4245,9 @@ local function upgradeNodes(zone, densityLevel, zoneId)
                     and nodeState(node) == "available" then
                     local y = node.Position.Y.Scale
                     local distanceX = math.abs(node.Position.X.Scale - referenceX)
-                    -- Nodes beside Density share its Y (horizontal row), not its X (column).
+
                     local sameRow = math.abs(y - referenceY) <= ROW_SCALE_TOLERANCE
-                    -- Density itself still has priority in the branch above; distanceX orders other nodes.
+
                     if maxed or y < referenceY or sameRow then
                         table.insert(candidates, {
                             node = node,
@@ -3251,83 +4269,87 @@ local function upgradeNodes(zone, densityLevel, zoneId)
             local nodeName = choice.node.Name
             attempted[nodeName] = true
             if maxed then
-                
+
             else
-                
+
             end
             process(nodeName)
         end
-        -- Both branches return to the density check. Each named node may
-        -- receive at most 50 requests per cycle, even if it stays red.
+
     end
     if not alive then error("Unloaded.", 0) end
-    if colossusPips then
+    if shouldStopForColossus(zoneId, colossusPips) then
         return totalNodes, totalRequests, densityLevel, 0, colossusPips
     end
-    -- Allow late UI updates before deciding whether another cycle is useful.
+
     if totalRequests > 0 then pause(SETTLE_TIME) end
     if not alive then error("Unloaded.", 0) end
-    densityLevel, zone = scanDensity(zone) -- Include late responses before counting purchases.
+    densityLevel, zone = scanDensity(zone)
     colossusPips = reachedColossusPips(zone)
     local confirmedUpgrades = 0
     for nodeName in pairs(requestedNodes) do
         local node = zone:FindFirstChild(nodeName)
-        -- Requests were sent only while red. Green now confirms progress;
-        -- merely sending a request does not count as an upgrade.
+
         if node and nodeState(node) == "upgraded" then
             confirmedUpgrades = confirmedUpgrades + 1
         end
     end
-    
+
     return totalNodes, totalRequests, densityLevel, confirmedUpgrades, colossusPips
 end
 
+local function scanCurrentUpgradeZone()
+    checkAlive()
+    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady = nil, nil, nil, false
+    status.Text = "Opening Upgrades for a fresh zone and Density scan..."
+    openUpgrades()
+    pause(SETTLE_TIME)
+    local zone, zoneId = waitForZone()
+    cycleZoneId, cycleZoneName = zoneId, zone.Name
+    local level
+    level, zone = scanDensity(zone)
+    syncUnitSequenceZone(zoneId)
+    notifyMaxZoneReached(zoneId)
+    logInfo("Upgrades", string.format("Fresh UI scan: %s, Density %d.", zoneId, level))
+    return zone, zoneId, level
+end
 
 local function runUpgrades()
             if not alive then return "Unloaded." end
-            -- Detect once before entering Upgrades. The zone ID and folder
-            -- name stay fixed for every cycle in this run.
-            status.Text = "Resolving cached cycle zone..."
-            local zoneId, cachedZoneName = getCycleZone()
-            if not alive then return "Unloaded." end
-            syncUnitSequenceZone(zoneId) -- Reset only after the new zone is confirmed/cached.
-            status.Text = "Opening Upgrades for " .. zoneId .. "..."
-            openUpgrades()
-            pause(SETTLE_TIME)
-            if not alive then return "Unloaded." end
-            local zone = waitForZone(cachedZoneName)
+            local zone, zoneId = scanCurrentUpgradeZone()
             local cycle = 0
             local totalRequests = 0
             local totalUpgrades = 0
             while alive do
                 cycle = cycle + 1
-                
+
                 status.Text = "Cycle " .. cycle .. ": scanning density..."
                 local level = scanDensity(zone)
                 if not alive then return "Unloaded." end
-                
+                local toggleResult, complete = saveColossusStageToggles(zoneId, reachedColossusPips(zone))
+                if complete then return toggleResult end
+
                 local _, requests, currentDensity, confirmed, colossusPips = upgradeNodes(zone, level, zoneId)
-                if colossusPips then
-                    return saveColossusStageToggles(colossusPips)
+                if shouldStopForColossus(zoneId, colossusPips) then
+                    return (saveColossusStageToggles(zoneId, colossusPips))
                 end
                 totalRequests = totalRequests + requests
                 totalUpgrades = totalUpgrades + confirmed
                 if confirmed == 0 then
-                    
+
                     return string.format("%s density %d. Cycles: %d. Upgrades: %d. Requests: %d.", zoneId, currentDensity, cycle, totalUpgrades, totalRequests)
                 end
-                
+
                 pause(UPGRADE_DELAY)
             end
             return "Unloaded."
 end
-label(pages.cycleEnd.frame, "Zone selection requires Upgrades to complete in the same Master cycle.",
+label(pages.cycleEnd.frame, "Zone selection uses the zone and Density saved by the Upgrades step, even while OFF.",
     UDim2.fromOffset(18, 294), UDim2.new(1, -36, 0, 36), 12)
 local selectCurrent = button(pages.cycleEnd.frame, "", UDim2.fromOffset(18, 338), UDim2.new(1, -36, 0, 30))
 selectCurrent.Name = "SelectCurrentZoneToggle"
 local selectNext = button(pages.cycleEnd.frame, "", UDim2.fromOffset(18, 376), UDim2.new(1, -36, 0, 30))
 selectNext.Name = "SelectNextZoneToggle"
-
 
 local function refreshZoneToggles(locked)
     for _, item in ipairs({
@@ -3354,26 +4376,22 @@ connect(selectNext.Activated, function()
 end)
 refreshZoneToggles(false)
 modules.upgrades = {setBusy = refreshZoneToggles, getDensity = function()
-    -- Resolve once if this is the first zone-dependent stage (including standalone).
-    -- Upgrades refreshes this value while purchasing; later stages only use the cache.
+
     getCycleZone()
     assert(cycleDensityLevel ~= nil, "Density cache is missing.")
     return cycleDensityLevel
-end, checkTutorialVisibility = function()
-    checkAlive()
-    if preferences.tutorialHidden then return "Tutorial button is already hidden." end
-    status.Text = "Upgrades OFF: checking tutorial zone and density..."
-    openUpgrades()
-    local zoneId, zoneName = getCycleZone()
-    -- Read only: do not call runUpgrades or mark Upgrades complete for zone selection.
-    local level = scanDensity(waitForZone(zoneName))
+end, cacheCurrentZone = function()
+    local zone, zoneId, level = scanCurrentUpgradeZone()
+    local result, complete = saveColossusStageToggles(zoneId, reachedColossusPips(zone))
+    if not complete then return modules.upgrades.run() end
     closeSkillTree()
-    return string.format("Upgrades OFF: checked %s density %d; tutorial button %s.",
-        zoneId, level, preferences.tutorialHidden and "hidden" or "still visible")
+    cycleZoneReady = true
+    return string.format("%s Fresh Canvas density %d; tutorial button %s; zone selection ready.",
+        result, level, preferences.tutorialHidden and "hidden" or "still visible")
 end, selectZones = function()
     checkAlive()
-    if not cycleUpgradesComplete then
-        logUnitUpgradeDetail("Zone selection skipped: Upgrades did not complete this cycle.")
+    if not cycleZoneReady then
+        logUnitUpgradeDetail("Zone selection skipped: the Upgrades step has not prepared saved zone/Density values.")
         return
     end
     if not CONFIG.Upgrades.SelectCurrentZone and not CONFIG.Upgrades.SelectNextZone then return end
@@ -3392,62 +4410,88 @@ end, selectZones = function()
         logUnitUpgradeDetail("Cycle end: selected next zone " .. nextZone .. ".")
     end
 end, run = function()
-    cycleUpgradesComplete = false
+    cycleZoneReady = false
     local result = runUpgrades()
     checkAlive()
     status.Text = "Closing the skill tree; zone selection waits until the end..."
     closeSkillTree()
     assert(cycleDensityLevel ~= nil, "Density cache is missing.")
-    cycleUpgradesComplete = true
+    cycleZoneReady = true
     logUnitUpgradeDetail(string.format("Upgrades finished: %s, density %d cached; current/next selection deferred to the end.",
         tostring(cycleZoneId), cycleDensityLevel))
     return result
 end}
 end
 
-
 local function mutationStoppedByDensityII(zoneId)
-    -- Use this cycle's confirmed density, never an executor-persisted stop flag alone.
+
     local level = modules.upgrades.getDensity()
     assert(zoneId == cycleZoneId, "Mutation density check does not match the current zone.")
     return level >= 2
 end
 
--- REQUIRED UNITS: check displayed + hotbar availability before removal, then refill hotbar again for placement.
 do
 local status = stageStatus("units")
--- FINAL EQUIP CONFIG (runs after inventory closes and hotbar summary prints).
--- "RequiredUnits": place ONLY matching units in hotbar slot order 1-9 when
--- their combined quantity meets RequiredUnitCount; otherwise skip placement.
--- "Best": skip placement here; Master requests Equip Best at cycle end.
+
 local FinalEquipMode = CONFIG.Units.FinalEquipMode
 
--- Edit RequiredUnitCount for each zone. Copies in a stack count individually.
--- 0 = no minimum; at least one combined match and one final hotbar match are still needed.
--- Empty Names / an unlisted zone = no matching rule, so skip placement.
--- Names match the trimmed ItemName.Text exactly (including Shiny).
--- Placement follows hotbar slots 1-9, finishing each stack before the next slot.
 local RequiredUnitsByZone = CONFIG.Units.RequiredByZone
 local ACTION_TIMEOUT = CONFIG.Units.ActionTimeout
 local TELEPORT_SETTLE = CONFIG.Units.TeleportDelay
--- Placement timings and number-key selection follow mutation.luau.
+
 local EQUIP_SLOT_SETTLE = CONFIG.Units.EquipSlotDelay
 local PLACEMENT_KEY_HOLD = CONFIG.Units.PlacementKeyHold
 local PLACEMENT_SETTLE = CONFIG.Units.PlacementDelay
 local HOTBAR_KEYS = CONFIG.Units.HotbarKeys
-local UI_SETTLE = CONFIG.Units.UISettleTime
+local UI_SETTLE = CONFIG.Units.InventorySettleTime
 local DISPLAY_REMOVE_DELAY = CONFIG.Units.DisplayRemoveDelay
 local CLICK_DELAY = CONFIG.Units.InventoryClickDelay
-
 
 local function setStatus(message)
     checkAlive()
     status.Text = message
-    
+
 end
-local function listSlots(plot)
+local unitRetryOffsets = {
+    Vector3.new(1, 0, 0), Vector3.new(0, 0, 1),
+    Vector3.new(-1, 0, 0), Vector3.new(0, 0, -1),
+}
+local function unitRetryOffset(attempt)
+    if attempt == 1 then return Vector3.zero end
+    return unitRetryOffsets[(attempt - 2) % #unitRetryOffsets + 1]
+end
+
+local function unitInteractionPath(parent, names)
+    for _, name in ipairs(names) do
+        local current = parent
+        parent = waitUntil(function() return current:FindFirstChild(name) end, nil,
+            "Waiting for unit interaction path component " .. name .. " under " .. current:GetFullName())
+    end
+    return parent
+end
+
+local function closeUnitInteractionPanel(frame, buttonPath, retryDelay)
+    if #buttonPath == 1 and buttonPath[1] == "ExitButton" then
+        closeUnitPanel("Closing unit panel with ExitButton before unit interaction")
+        return
+    end
+    local reportRetry = newRetryMonitor("Closing unit/inventory panel " .. frame.Name)
+    while frame.Parent and visible(frame) do
+        checkAlive()
+        local button = frame
+        for _, name in ipairs(buttonPath) do
+            button = button and button:FindFirstChild(name)
+        end
+        if button and visible(button) then clickButton(button) end
+        reportRetry()
+        pause(retryDelay)
+    end
+    reportRetry(nil, true)
+end
+
+local function listSlots(plot, waitForInteraction)
     checkPlot(plot)
-    local holders = path(plot, {"Holders"})
+    local holders = (waitForInteraction and unitInteractionPath or path)(plot, {"Holders"})
     local slots = {}
     for _, holder in ipairs(holders:GetChildren()) do
         local number = tonumber(holder.Name:match("^M(%d+)$"))
@@ -3460,81 +4504,80 @@ local function listSlots(plot)
     return holders, slots
 end
 
-local function holderPrompt(plot, holderName)
+local function holderPrompt(plot, holderName, waitForInteraction)
     checkPlot(plot)
-    local prompt = path(plot, {"Holders", holderName, "Pad", "HolderPrompt"})
+    local prompt = (waitForInteraction and unitInteractionPath or path)(plot, {"Holders", holderName, "Pad", "HolderPrompt"})
     if not prompt:IsA("ProximityPrompt") then error(holderName .. " HolderPrompt is not a ProximityPrompt.", 0) end
     return prompt
 end
 
 local function hasPickUpAction(prompt)
-    return prompt.ActionText == "Pick up"
+    return prompt.ActionText:match("^%s*(.-)%s*$"):lower() == "pick up"
 end
 
 local function emptyDisplayUnits(plot, phase)
     local mine = playerGui:FindFirstChild("MineGui")
     local focus = mine and mine:FindFirstChild("SlotFocusFrame")
     if focus and visible(focus) then
-        clickButton(path(focus, {"ExitButton"}))
-        waitUntil(function() return not focus.Parent or not visible(focus) end,
-            ACTION_TIMEOUT, "Could not close the unit panel before removing units.")
+        closeUnitInteractionPanel(focus, {"ExitButton"}, CONFIG.Units.RemovalRetryDelay)
     end
     local inventory = mine and mine:FindFirstChild("InventoryFrame")
     if inventory and visible(inventory) then
-        clickButton(path(inventory, {"Content", "Actions", "Close"}))
-        waitUntil(function() return not inventory.Parent or not visible(inventory) end,
-            ACTION_TIMEOUT, "Could not close inventory before removing units.")
+        closeUnitInteractionPanel(inventory, {"Content", "Actions", "Close"}, CONFIG.Units.RemovalRetryDelay)
     end
-    local _, slots = listSlots(plot)
     local removed = 0
-    for _, slot in ipairs(slots) do
-        if hasPickUpAction(holderPrompt(plot, slot.name)) then
-            for attempt = 1, CONFIG.Units.RemovalMaxAttempts do
-                local prompt = holderPrompt(plot, slot.name)
-                if not hasPickUpAction(prompt) then break end
-                local upgrade = path(plot, {"Holders", slot.name, "UpgradePart"})
-                if not upgrade:IsA("BasePart") then error(slot.name .. " UpgradePart is not a BasePart.", 0) end
-                local root = originalRoot
-                if not root or not player.Character or not root:IsDescendantOf(player.Character) then
-                    error("Character changed during removal. Run again after respawning.", 0)
+    while true do
+        local _, slots = listSlots(plot, true)
+        for _, slot in ipairs(slots) do
+            if hasPickUpAction(holderPrompt(plot, slot.name, true)) then
+                local attempt = 0
+                local reportRetry = newRetryMonitor("Removing unit from " .. slot.name)
+                while true do
+                    attempt = attempt + 1
+                    local prompt = holderPrompt(plot, slot.name, true)
+                    if not hasPickUpAction(prompt) then break end
+                    local upgrade = unitInteractionPath(plot, {"Holders", slot.name, "UpgradePart"})
+                    if not upgrade:IsA("BasePart") then error(slot.name .. " UpgradePart is not a BasePart.", 0) end
+                    local root = originalRoot
+                    if not root or not player.Character or not root:IsDescendantOf(player.Character) then
+                        error("Character changed during removal. Run again after respawning.", 0)
+                    end
+                    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+                    if humanoid then humanoid:UnequipTools() end
+                    if not hasPickUpAction(holderPrompt(plot, slot.name, true)) then break end
+                    setStatus(string.format("%s: removing %s (attempt %d)...",
+                        phase, slot.name, attempt))
+                    root.CFrame = CFrame.new(upgrade.Position + Vector3.new(0, CONFIG.Units.TeleportHeight, 0) + unitRetryOffset(attempt), upgrade.Position)
+                    root.AssemblyLinearVelocity = Vector3.zero
+                    root.AssemblyAngularVelocity = Vector3.zero
+                    pause(TELEPORT_SETTLE)
+                    prompt = holderPrompt(plot, slot.name, true)
+                    if hasPickUpAction(prompt) and prompt.Enabled then
+                        heldPrompt = prompt
+                        prompt:InputHoldBegin()
+                        pause(math.max(prompt.HoldDuration, CONFIG.Units.RemovalMinimumHold) + CONFIG.Units.RemovalHoldPadding)
+                        releaseInputs()
+                    end
+                    reportRetry()
+                    pause(CONFIG.Units.RemovalRetryDelay)
+                    if not hasPickUpAction(holderPrompt(plot, slot.name, true)) then break end
                 end
-                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid then humanoid:UnequipTools() end
-                if not hasPickUpAction(holderPrompt(plot, slot.name)) then break end
-                setStatus(string.format("%s: removing %s (%d/%d)...",
-                    phase, slot.name, attempt, CONFIG.Units.RemovalMaxAttempts))
-                root.CFrame = CFrame.new(upgrade.Position + Vector3.new(0, CONFIG.Units.TeleportHeight, 0), upgrade.Position)
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-                pause(TELEPORT_SETTLE)
-                prompt = holderPrompt(plot, slot.name)
-                if hasPickUpAction(prompt) and prompt.Enabled then
-                    heldPrompt = prompt
-                    prompt:InputHoldBegin()
-                    pause(math.max(prompt.HoldDuration, CONFIG.Units.RemovalMinimumHold) + CONFIG.Units.RemovalHoldPadding)
-                    releaseInputs()
-                end
-                local deadline = os.clock() + ACTION_TIMEOUT
-                while hasPickUpAction(holderPrompt(plot, slot.name)) and os.clock() < deadline do
-                    pause(CONFIG.General.WaitPoll)
-                end
-                if not hasPickUpAction(holderPrompt(plot, slot.name)) then break end
-                if attempt < CONFIG.Units.RemovalMaxAttempts then pause(CONFIG.Units.RemovalRetryDelay) end
+                reportRetry(nil, true)
+                removed = removed + 1
+                pause(DISPLAY_REMOVE_DELAY)
             end
-            if hasPickUpAction(holderPrompt(plot, slot.name)) then
-                error(slot.name .. ': still says "Pick up" after removal retries.', 0)
+        end
+        local _, remaining = listSlots(plot, true)
+        local pending = false
+        for _, slot in ipairs(remaining) do
+            if hasPickUpAction(holderPrompt(plot, slot.name, true)) then
+                pending = true
+                break
             end
-            removed = removed + 1
-            pause(DISPLAY_REMOVE_DELAY)
         end
+        if not pending then return removed end
+        pause(CONFIG.Units.RemovalRetryDelay)
     end
-    _, slots = listSlots(plot)
-    for _, slot in ipairs(slots) do
-        if hasPickUpAction(holderPrompt(plot, slot.name)) then
-            error(slot.name .. ': still says "Pick up". Stopped before the next phase.', 0)
-        end
-    end
-    return removed
 end
 
 local function inventoryFrame()
@@ -3591,7 +4634,6 @@ local function inventoryTargets(scroll, includeAll)
     return targets
 end
 
--- Compare displayed damage without expanding huge suffixes into floating-point values.
 local damageIllions = { [""] = 0 }
 do
     local ones = {{""}, {"U"}, {"D"}, {"T"}, {"Qa"}, {"Qi", "Qu"}, {"Sx"}, {"Sp"}, {"Oc"}, {"No"}}
@@ -3611,7 +4653,7 @@ do
             end
         end
     end
-    -- Standalone names differ from the prefixes used in compound illions.
+
     for index, suffix in ipairs({"M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No"}) do
         damageIllions[suffix:lower()] = index
     end
@@ -3623,8 +4665,7 @@ local function damageSuffixPower(suffix)
     if suffix == "k" then return 3 end
     local illion = damageIllions[suffix]
     if illion then return (illion + 1) * 3 end
-    -- Extended illions: Mi = 1,000th, Mc = 1,000,000th, and so on.
-    -- Each marker accepts a 1..999 prefix, with a final 0..999 group.
+
     local remainder, total, previousScale = suffix, 0, math.huge
     local markers = {"mi", "mc", "na", "pc", "fm", "at", "zp", "yc"}
     for index = #markers, 1, -1 do
@@ -3641,7 +4682,7 @@ local function damageSuffixPower(suffix)
             previousScale = scale
         end
     end
-    -- Markers must be processed from largest to smallest (e.g. UMcDMiT).
+
     if total == 0 then return nil end
     local tail = damageIllions[remainder]
     if tail == nil then return nil end
@@ -3678,14 +4719,15 @@ end
 
 local function inventoryText(label)
     if label and (label:IsA("TextLabel") or label:IsA("TextButton") or label:IsA("TextBox")) then
-        return label.Text:match("^%s*(.-)%s*$")
+        return label.Text:gsub("<[^>]*>", ""):gsub("&nbsp;", " "):gsub("&amp;", "&")
+            :gsub("\194\160", " "):gsub("\226\128\139", ""):gsub("%s+", " "):match("^%s*(.-)%s*$")
     end
     return ""
 end
 
 local function taggedInventoryName(itemName)
     local tag = itemName and itemName:GetAttribute("_AnimTag")
-    return tag ~= nil and tag ~= "" -- false and 0 are valid tags.
+    return tag ~= nil and tag ~= ""
 end
 
 local function higherInventoryPriority(a, b)
@@ -3694,157 +4736,280 @@ local function higherInventoryPriority(a, b)
     local left = a.damage.digits .. string.rep("0", width - #a.damage.digits)
     local right = b.damage.digits .. string.rep("0", width - #b.damage.digits)
     if left ~= right then return left > right end
-    if a.tagged ~= b.tagged then return a.tagged end -- Untagged fallback on equal damage below density 2.
-    return a.index < b.index -- Preserve inventory order when damage and tag eligibility tie.
+    if a.tagged ~= b.tagged then return a.tagged end
+    return a.index < b.index
 end
 
-local function clickInventoryItems(densityLevel, zoneId)
-    local rule = RequiredUnitsByZone[zoneId]
-    local allowed = {}
-    for _, name in ipairs(rule and rule.Names or {}) do allowed[name] = true end
-    if next(allowed) == nil then return end
-    local requireAnimTag = densityLevel >= 2
-    local targets = waitUntil(function()
-        return inventoryTargets(inventoryScroll(), true)
-    end, LOAD_TIMEOUT, "Could not find clickable inventory items to check against " .. zoneId .. " Names.")
-    local clicked, skippedNames, skippedTags, skippedDamage = 0, 0, 0, 0
-    local candidates = {}
+local function parseRequiredStackCount(countText)
+    if countText == "" then return 1 end
+    local compact = countText:lower():gsub("×", "x"):gsub(",", ""):gsub("%s+", "")
+    local digits = compact:match("^x(%d+)$") or compact:match("^(%d+)x$") or compact:match("^(%d+)$")
+    local count = digits and tonumber(digits)
+    if count and count >= 1 and count < math.huge and count % 1 == 0 then return count end
+    return nil
+end
+
+local function readRequiredHotbarSnapshot()
+    local container = playerGui
+    for _, name in ipairs({"MineGui", "HotbarFrame", "Content", "Container"}) do
+        container = container and container:FindFirstChild(name)
+    end
+    if not container then return nil, "Hotbar container is not loaded." end
+    local summary, signature = {}, {}
+    for index = 1, 9 do
+        local slot = container:FindFirstChild(tostring(index))
+        local item = slot and slot:FindFirstChild("ItemFrame")
+        local content = item and item:FindFirstChild("Content")
+        local hidden = item and item:IsA("GuiObject") and not item.Visible
+        local name = not hidden and inventoryText(content and content:FindFirstChild("ItemName")) or ""
+        local count = 0
+        if name ~= "" then
+            local countLabel = content and content:FindFirstChild("ActualItemCount")
+            local countText = inventoryText(countLabel)
+            if countText == "" then
+                -- The game omits the quantity text for single copies. Only accept this
+                -- reading after the whole snapshot has stayed stable below.
+                count = 1
+            else
+                count = parseRequiredStackCount(countText)
+                if not count then
+                    return nil, string.format("Hotbar slot %d (%s): unreadable quantity %q; waiting for a valid stack count.", index, name, countText)
+                end
+            end
+        end
+        summary[index] = {slot = index, name = name, count = count}
+        signature[index] = string.format("%d:%q:%d", index, name, count)
+    end
+    return summary, table.concat(signature, "|")
+end
+
+local function readStableRequiredHotbar(operation, expected, retryAction, retryUnreadable)
+    local reportRetry = newRetryMonitor(operation)
+    local lastSignature, stableSince
+    local nextRetry = os.clock() + math.max(CONFIG.General.RetryInterval, UI_SETTLE * 2)
+    while true do
+        checkAlive()
+        local summary, signature = readRequiredHotbarSnapshot()
+        local ready, problem = false, signature
+        if summary then
+            ready = not expected or expected(summary)
+            if ready then
+                if signature ~= lastSignature then lastSignature, stableSince = signature, os.clock() end
+                if os.clock() - stableSince >= UI_SETTLE then reportRetry(nil, true); return summary end
+                problem = "Hotbar names/stack counts are still settling."
+            else
+                lastSignature, stableSince = nil, nil
+                problem = "The requested hotbar change has not been confirmed."
+            end
+        else
+            lastSignature, stableSince = nil, nil
+        end
+        if retryAction and not ready and (summary or retryUnreadable) and os.clock() >= nextRetry then
+            local ok, message = pcall(retryAction)
+            checkAlive()
+            if not ok then problem = tostring(message) end
+            nextRetry = os.clock() + math.max(CONFIG.General.RetryInterval, UI_SETTLE * 2)
+        end
+        reportRetry(problem)
+        pause(CONFIG.General.WaitPoll)
+    end
+end
+
+local function hotbarCopiesOf(summary, name)
+    local count = 0
+    for _, entry in ipairs(summary) do
+        if entry.name == name then count = count + entry.count end
+    end
+    return count
+end
+
+local function saveAndPrintHotbarSummary(operation, verifiedSummary)
+    local summary = verifiedSummary or readStableRequiredHotbar(operation or "Reading stable Required Units hotbar quantities")
+    local total, occupied, details = 0, 0, {}
+    for _, entry in ipairs(summary) do
+        total = total + entry.count
+        if entry.name ~= "" then
+            occupied = occupied + 1
+            table.insert(details, string.format("slot %d: %s x%d", entry.slot, entry.name, entry.count))
+        end
+    end
+    _G.MineHotbarSummary, _G.MineHotbarTotalCount = summary, total
+    logInfo("Required Units", string.format("Verified hotbar: %d occupied slots, %d unit copies (including stacks). %s",
+        occupied, total, #details > 0 and table.concat(details, "; ") or "Hotbar is empty."))
+    return summary
+end
+
+local function closeRequiredInventory()
+    local function close()
+        local frame = inventoryFrame()
+        if visible(frame) then clickButton(path(frame, {"Content", "Actions", "Close"})) end
+    end
+    close()
+    waitUntil(function() return not visible(inventoryFrame()) end, nil,
+        "Closing Required Units inventory", close)
+end
+
+local function openRequiredInventory()
+    if visible(inventoryFrame()) then return end
+    local function open()
+        if not visible(inventoryFrame()) then
+            clickButton(path(playerGui, {"MineGui", "HotbarFrame", "Content", "Container", "InventoryButton"}))
+        end
+    end
+    open()
+    waitUntil(function() return visible(inventoryFrame()) end, nil,
+        "Opening Required Units inventory", open)
+    pause(UI_SETTLE)
+end
+
+local function clearRequiredHotbar(event, plot, phase)
+    local function clear()
+        checkPlot(plot)
+        local container = unitInteractionPath(playerGui, {"MineGui", "HotbarFrame", "Content", "Container"})
+        -- Clear occupied assignments only; absent/locked hotbar slots need no request.
+        -- Quantities need not be readable to remove an existing assignment.
+        for index = 1, 9 do
+            local slot = container:FindFirstChild(tostring(index))
+            local item = slot and slot:FindFirstChild("ItemFrame")
+            local content = item and item:FindFirstChild("Content")
+            local hidden = item and item:IsA("GuiObject") and not item.Visible
+            if not hidden and inventoryText(content and content:FindFirstChild("ItemName")) ~= "" then
+                checkAlive()
+                event:FireServer("MineAssignHotbar", tostring(index), "")
+            end
+        end
+    end
+    setStatus(phase .. ": emptying hotbar...")
+    local ok, reason = pcall(clear)
+    if not ok then logUnitUpgradeDetail(phase .. ": " .. tostring(reason)) end
+    pause(CONFIG.Units.HotbarClearDelay)
+    return readStableRequiredHotbar(phase .. ": confirming empty hotbar", function(summary)
+        for _, entry in ipairs(summary) do if entry.name ~= "" then return false end end
+        return true
+    end, clear, true)
+end
+
+local function scanRequiredInventory(densityLevel, zoneId)
+    local rule = RequiredUnitsByZone[zoneId] or {Names = {}}
+    local allowed, rows = {}, {}
+    for _, name in ipairs(rule.Names) do allowed[name] = true end
     local scroll = inventoryScroll()
-    local rows = {}
     for _, row in ipairs(scroll:GetChildren()) do
         if row:IsA("GuiObject") then rows[row.Name .. "\0" .. tostring(row.LayoutOrder)] = row end
     end
+    local candidates, signature = {}, {}
+    local total, skippedNames, skippedTags, skippedDamage = 0, 0, 0, 0
+    -- An empty inventory is a valid zero count; it may still pass with displayed units.
+    local targets = inventoryTargets(scroll, true) or {}
     for index, target in ipairs(targets) do
         checkAlive()
         local row = rows[target.name .. "\0" .. tostring(target.order)]
-        if not row then error("Inventory item changed before ranking: " .. target.name, 0) end
+        if not row then return nil, "Inventory rows changed while counting; waiting for a fresh scan." end
         local content = row:FindFirstChild("Content")
         local itemName = content and content:FindFirstChild("ItemName")
-        local name = inventoryText(itemName)
-        local tagged = taggedInventoryName(itemName)
+        local name, tagged = inventoryText(itemName), taggedInventoryName(itemName)
         if not allowed[name] then
             skippedNames = skippedNames + 1
-        elseif requireAnimTag and not tagged then
+        elseif densityLevel >= 2 and not tagged then
             skippedTags = skippedTags + 1
         else
             local damage = inventoryDamageKey(inventoryText(content and content:FindFirstChild("Damage")))
-            if damage then
-                table.insert(candidates, {target = target, row = row, name = name, tagged = tagged,
-                    damage = damage, index = index})
-            else
+            if not damage then
                 skippedDamage = skippedDamage + 1
+            else
+                local count = parseRequiredStackCount(inventoryText(content and content:FindFirstChild("ActualItemCount")))
+                if not count then return nil, "Unreadable inventory stack count for " .. name .. "; waiting for its quantity." end
+                table.insert(candidates, {target = target, row = row, name = name, tagged = tagged,
+                    damage = damage, index = index, count = count, source = "inventory"})
+                total = total + count
             end
         end
     end
     table.sort(candidates, higherInventoryPriority)
-    for _, candidate in ipairs(candidates) do
+    for _, entry in ipairs(candidates) do
+        table.insert(signature, string.format("%q:%s:%q:%s:%s:%s:%d", entry.target.name,
+            tostring(entry.target.order), entry.name, tostring(entry.tagged), tostring(entry.damage.power), entry.damage.digits, entry.count))
+    end
+    return {summary = candidates, total = total, skippedNames = skippedNames,
+        skippedTags = skippedTags, skippedDamage = skippedDamage}, table.concat(signature, "|")
+end
+
+local function readRequiredInventory(densityLevel, zoneId, operation)
+    local reportRetry = newRetryMonitor(operation)
+    local lastSignature, stableSince
+    while true do
         checkAlive()
-        if clicked >= 9 then break end
-        local target = candidate.target
-        local match = nil
+        if not visible(inventoryFrame()) then openRequiredInventory() end
+        local result, signature = scanRequiredInventory(densityLevel, zoneId)
+        local problem = signature
+        if result then
+            if signature ~= lastSignature then lastSignature, stableSince = signature, os.clock() end
+            if os.clock() - stableSince >= UI_SETTLE then
+                logInfo("Required Units", string.format("%s density %d inventory count: %d whitelisted copies across %d stacks; skipped %d other names, %d untagged matches, %d unreadable Damage values.",
+                    zoneId, densityLevel, result.total, #result.summary, result.skippedNames, result.skippedTags, result.skippedDamage))
+                reportRetry(nil, true)
+                return result
+            end
+            problem = "Inventory names, ranking, and stack counts are still settling."
+        else
+            lastSignature, stableSince = nil, nil
+        end
+        reportRetry(problem)
+        pause(CONFIG.General.WaitPoll)
+    end
+end
+
+local function selectRequiredStack(candidate)
+    local function confirmed(summary)
+        if summary[1].name ~= candidate.name or summary[1].count < candidate.count then return false end
+        for index = 2, 9 do if summary[index].name ~= "" then return false end end
+        return true
+    end
+    local function activate()
+        local summary = readRequiredHotbarSnapshot()
+        if not summary then return end
+        -- Do not toggle a selection off while its name/quantity is arriving.
+        for _, entry in ipairs(summary) do if entry.name ~= "" then return end end
+        local match
         for _, row in ipairs(inventoryScroll():GetChildren()) do
-            if row:IsA("GuiObject") and row.Name == target.name and row.LayoutOrder == target.order then
-                if match then error("Inventory target became ambiguous: " .. target.name, 0) end
+            if row:IsA("GuiObject") and row.Name == candidate.target.name and row.LayoutOrder == candidate.target.order then
+                if match then error("Inventory target became ambiguous: " .. candidate.target.name, 0) end
                 match = row
             end
         end
-        if match ~= candidate.row then error("Inventory item changed before click: " .. target.name, 0) end
+        if not match then error("Waiting for the selected inventory card " .. candidate.target.name .. " (" .. candidate.name .. ").", 0) end
         local content = match:FindFirstChild("Content")
         local itemName = content and content:FindFirstChild("ItemName")
-        local name = inventoryText(itemName)
-        -- Recheck the exact whitelist and _AnimTag immediately before each click.
-        if not allowed[name] then
-            skippedNames = skippedNames + 1
-        elseif requireAnimTag and not taggedInventoryName(itemName) then
-            skippedTags = skippedTags + 1
-        else
-            local damage = inventoryDamageKey(inventoryText(content and content:FindFirstChild("Damage")))
-            if not damage or damage.power ~= candidate.damage.power or damage.digits ~= candidate.damage.digits then
-                error("Inventory damage changed before click: " .. target.name .. "; rerun to rank it again.", 0)
-            end
-            setStatus(string.format("Clicking required inventory item %d/9 (%s)...", clicked + 1, name))
-            clickButton(match)
-            clicked = clicked + 1
-            pause(CLICK_DELAY)
+        local damage = inventoryDamageKey(inventoryText(content and content:FindFirstChild("Damage")))
+        if inventoryText(itemName) ~= candidate.name or taggedInventoryName(itemName) ~= candidate.tagged
+            or not damage or damage.power ~= candidate.damage.power or damage.digits ~= candidate.damage.digits then
+            error("Inventory name/tag/Damage changed before selecting " .. candidate.name .. ".", 0)
         end
+        if visible(match) then clickButton(match) end
     end
-    logInfo("Required Units", string.format("%s density %d inventory selection: clicked %d/9 whitelisted items (highest damage first, tagged on ties); skipped %d other names, %d untagged matches, and %d unreadable damage values.",
-        zoneId, densityLevel, clicked, skippedNames, skippedTags, skippedDamage))
-end
-
-local function saveAndPrintHotbarSummary()
-    local container = path(playerGui, {"MineGui", "HotbarFrame", "Content", "Container"})
-    local summary = {}
-    local total = 0
-    local unreadableCounts = {}
-    for index = 1, 9 do
-        checkAlive()
-        local slot = container:FindFirstChild(tostring(index))
-        local item = slot and slot:FindFirstChild("ItemFrame")
-        local content = item and item:FindFirstChild("Content")
-        local nameLabel = content and content:FindFirstChild("ItemName")
-        local countLabel = content and content:FindFirstChild("ActualItemCount")
-        local function readText(label)
-            if label and (label:IsA("TextLabel") or label:IsA("TextButton") or label:IsA("TextBox")) then
-                return label.Text:match("^%s*(.-)%s*$")
-            end
-            return ""
-        end
-        local name = readText(nameLabel)
-        local countText = readText(countLabel)
-        local count = 0
-        if countText == "" then
-            count = name ~= "" and 1 or 0
-        else
-            local digits = countText:lower():gsub(",", ""):match("^x%s*(%d+)$")
-            if digits then
-                count = tonumber(digits) or 0
-            else
-                table.insert(unreadableCounts, string.format("slot %d=%q", index, countText))
-            end
-        end
-        summary[index] = { slot = index, name = name, count = count }
-        total = total + count
-    end
-    if #unreadableCounts > 0 then
-        logWarning("[MineBestHotbar] Unrecognized ActualItemCount; saved count 0 for "
-            .. table.concat(unreadableCounts, ", ") .. ".")
-    end
-    -- Saved in client memory for use by other scripts in this session.
-    _G.MineHotbarSummary = summary
-    _G.MineHotbarTotalCount = total
-    
-    for _, entry in ipairs(summary) do
-        
-    end
-    
-    return summary
-end
-
-local function emptyPlacementSlots(plot)
-    local holders, slots = listSlots(plot)
-    local empty = {}
-    for _, slot in ipairs(slots) do
-        local prompt = path(holders, {slot.name, "Pad", "HolderPrompt"})
-        if not prompt:IsA("ProximityPrompt") then error(slot.name .. " HolderPrompt is not a ProximityPrompt.", 0) end
-        if prompt.ActionText == "Place" then
-            table.insert(empty, slot.name)
-        end
-    end
-    return empty
+    setStatus(string.format("Selecting %s x%d for hotbar 1...", candidate.name, candidate.count))
+    local ok, reason = pcall(activate)
+    if not ok then logUnitUpgradeDetail("Hotbar 1 selection: " .. tostring(reason)) end
+    pause(CLICK_DELAY)
+    readStableRequiredHotbar("Confirming " .. candidate.name .. " in hotbar 1", confirmed, function()
+        local current = readRequiredHotbarSnapshot()
+        if current and confirmed(current) then return end
+        activate()
+    end, true)
+    local summary = readStableRequiredHotbar("Reading the confirmed hotbar 1 stack before placement", confirmed)
+    saveAndPrintHotbarSummary(nil, summary)
+    return summary[1]
 end
 
 local function closeUnitFocusForPlacement()
     local mine = playerGui:FindFirstChild("MineGui")
     local focus = mine and mine:FindFirstChild("SlotFocusFrame")
     if not focus or not visible(focus) then return end
-    clickButton(focus:FindFirstChild("ExitButton"))
-    waitUntil(function() return not focus.Parent or not visible(focus) end,
-        ACTION_TIMEOUT, "Could not close the previous unit panel before placement.")
+    closeUnitInteractionPanel(focus, {"ExitButton"}, CONFIG.Units.PlacementRetryDelay)
 end
 
 local function validatePlacementHotbar(entry)
-    local container = path(playerGui, {"MineGui", "HotbarFrame", "Content", "Container"})
+    local container = unitInteractionPath(playerGui, {"MineGui", "HotbarFrame", "Content", "Container"})
     local slot = container:FindFirstChild(tostring(entry.slot))
     local item = slot and slot:FindFirstChild("ItemFrame")
     local content = item and item:FindFirstChild("Content")
@@ -3855,59 +5020,52 @@ local function validatePlacementHotbar(entry)
 end
 
 local function placeHotbarUnit(plot, holderName, entry, copy)
-    local attempts = CONFIG.Units.PlacementMaxAttempts
-    if type(attempts) ~= "number" or attempts ~= attempts or attempts < 1
-        or attempts % 1 ~= 0 or attempts == math.huge then
-        error("Units.PlacementMaxAttempts must be a finite positive whole number.", 0)
-    end
     local function alreadyPlaced(attempt)
-        if not hasPickUpAction(holderPrompt(plot, holderName)) then return false end
+        if not hasPickUpAction(holderPrompt(plot, holderName, true)) then return false end
         if attempt == 1 then error(holderName .. " became occupied before hotbar selection (Pick Up).", 0) end
-        return true -- A late result from the previous attempt is success, not another prompt activation.
+        return true
     end
-    for attempt = 1, attempts do
-        if alreadyPlaced(attempt) then return true end
+    local attempt = 0
+    local reportRetry = newRetryMonitor("Placing " .. entry.name .. " in " .. holderName)
+    while true do
+        attempt = attempt + 1
+        if alreadyPlaced(attempt) then reportRetry(nil, true); return true end
         closeUnitFocusForPlacement()
-        local upgrade = path(plot, {"Holders", holderName, "UpgradePart"})
+        local upgrade = unitInteractionPath(plot, {"Holders", holderName, "UpgradePart"})
         local root = originalRoot
         if not upgrade:IsA("BasePart") then error(holderName .. " UpgradePart is not a BasePart.", 0) end
         if not root or not player.Character or not root:IsDescendantOf(player.Character) then
             error("Character changed during placement; run again after respawning.", 0)
         end
-        setStatus(string.format("Placing hotbar %d: %s (%d/%d) in %s; attempt %d/%d...",
-            entry.slot, entry.name, copy, entry.count, holderName, attempt, attempts))
-        root.CFrame = CFrame.new(upgrade.Position + Vector3.new(0, CONFIG.Units.TeleportHeight, 0), upgrade.Position)
+        setStatus(string.format("Placing hotbar %d: %s (%d/%d) in %s; attempt %d...",
+            entry.slot, entry.name, copy, entry.count, holderName, attempt))
+        root.CFrame = CFrame.new(upgrade.Position + Vector3.new(0, CONFIG.Units.TeleportHeight, 0) + unitRetryOffset(attempt), upgrade.Position)
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
         pause(TELEPORT_SETTLE)
-        if alreadyPlaced(attempt) then return true end
+        if alreadyPlaced(attempt) then reportRetry(nil, true); return true end
         if UserInputService:GetFocusedTextBox() then error("Leave the text field before placing units.", 0) end
         if attempt > 1 then
-            -- Selecting an already-equipped hotbar key can toggle it off; reset it before retrying.
+
             local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
             if humanoid then humanoid:UnequipTools() end
             pause(EQUIP_SLOT_SETTLE)
-            if alreadyPlaced(attempt) then return true end
+            if alreadyPlaced(attempt) then reportRetry(nil, true); return true end
         end
         local valid, reason = pcall(validatePlacementHotbar, entry)
         if not valid then
-            if alreadyPlaced(attempt) then return true end
+            if alreadyPlaced(attempt) then reportRetry(nil, true); return true end
             error(reason, 0)
         end
-        if alreadyPlaced(attempt) then return true end
+        if alreadyPlaced(attempt) then reportRetry(nil, true); return true end
         heldKey = Enum.KeyCode[HOTBAR_KEYS[entry.slot]]
         VIM:SendKeyEvent(true, heldKey, false, game)
         pause(PLACEMENT_KEY_HOLD)
         VIM:SendKeyEvent(false, heldKey, false, game)
         heldKey = nil
         pause(EQUIP_SLOT_SETTLE)
-        local deadline = os.clock() + ACTION_TIMEOUT
-        local current = holderPrompt(plot, holderName)
-        while not hasPickUpAction(current) and not (current.Parent and current.Enabled) and os.clock() < deadline do
-            pause(CONFIG.General.WaitPoll)
-            current = holderPrompt(plot, holderName)
-        end
-        if hasPickUpAction(current) then return true end
+        local current = holderPrompt(plot, holderName, true)
+        if hasPickUpAction(current) then reportRetry(nil, true); return true end
         if current.Parent and current.Enabled then
             setStatus("Activating placement prompt for " .. holderName .. "...")
             heldPrompt = current
@@ -3915,111 +5073,119 @@ local function placeHotbarUnit(plot, holderName, entry, copy)
             pause(math.max(current.HoldDuration, CONFIG.Units.PlacementMinimumHold))
             releaseInputs()
             pause(PLACEMENT_SETTLE)
-            deadline = os.clock() + ACTION_TIMEOUT
-            while not hasPickUpAction(holderPrompt(plot, holderName)) and os.clock() < deadline do
-                pause(CONFIG.General.WaitPoll)
-            end
-            if hasPickUpAction(holderPrompt(plot, holderName)) then return true end
+            if hasPickUpAction(holderPrompt(plot, holderName, true)) then reportRetry(nil, true); return true end
         end
-        if attempt < attempts then pause(CONFIG.Units.PlacementRetryDelay) end
+        reportRetry()
+        pause(CONFIG.Units.PlacementRetryDelay)
     end
-    error(holderName .. " did not change to Pick Up after placing hotbar " .. entry.slot
-        .. " (" .. attempts .. " attempts).", 0)
 end
 
-local function finishEquipping(plot, zoneId, summary, densityLevel)
+local function requiredPlacementState(plot, zoneId)
+    local required = requiredSlotCount(zoneId)
+    local allowed, empty, displayed = {}, {}, {}
+    for _, name in ipairs(RequiredUnitsByZone[zoneId].Names) do allowed[name] = true end
+    local holders, slots = listSlots(plot, true)
+    -- Preserve required-pad checks while also including every extra unlocked empty pad.
+    for number = 1, required do holderPrompt(plot, "M" .. number, true) end
+    for _, slot in ipairs(slots) do
+        local holderName = slot.name
+        local prompt = holderPrompt(plot, holderName, true)
+        if hasPickUpAction(prompt) then
+            local name = waitUntil(function()
+                local current = readCharacterName(holders:FindFirstChild(holderName))
+                return current and (allowed[current] or slot.number > required) and current
+            end, nil, "Waiting for a displayed unit in " .. holderName)
+            if allowed[name] then
+                table.insert(displayed, {name = name, count = 1, holder = holderName, source = "displayed"})
+            end
+        elseif prompt.ActionText == "Place" then
+            table.insert(empty, holderName)
+        elseif slot.number <= required then
+            return nil, nil, holderName .. ": waiting for its unlocked placement prompt."
+        end
+    end
+    return empty, displayed
+end
+
+local function finishEquipping(event, plot, zoneId, densityLevel)
+    local required = requiredSlotCount(zoneId)
     local function skipPlacement(reason)
         setStatus("Placement skipped: " .. reason)
-        logUnitUpgradeDetail("Required Units skipped placement after hotbar refresh: " .. reason)
+        logUnitUpgradeDetail("Required Units skipped serial placement: " .. reason)
         return "Placement skipped: " .. reason .. " Equip Best is handled at cycle end.", false, reason
     end
-    local rule = RequiredUnitsByZone[zoneId] or { RequiredUnitCount = 0, Names = {} }
-    local required = rule.RequiredUnitCount
-    if type(required) ~= "number" or required ~= required or required < 0
-        or required % 1 ~= 0 or required == math.huge then
-        error(zoneId .. ": RequiredUnitCount must be a finite nonnegative whole number.", 0)
-    end
-    local allowed = {}
-    for _, name in ipairs(rule.Names) do allowed[name] = true end
-    local matched = 0
-    for _, entry in ipairs(summary) do
-        if allowed[entry.name] then matched = matched + entry.count end
-    end
-    _G.MineHotbarMatchSummary = { zone = zoneId, matchedCount = matched, RequiredUnitCount = required }
-    recordMasterUnitCount(zoneId, matched)
-    
-    logInfo("Required Units", string.format("%s refreshed hotbar: matched %d required-unit copies; RequiredUnitCount=%d.",
-        zoneId, matched, required))
     if FinalEquipMode == "Best" then return skipPlacement("FinalEquipMode is Best.") end
     if densityLevel == 0 then return skipPlacement("density level is 0.") end
-    if matched == 0 or matched < required then
-        return skipPlacement(string.format("%s: matched %d, required %d.", zoneId, matched, required))
+    if required == 0 then return skipPlacement("RequiredUnitCount is zero; no required pads to fill.") end
+    local placed, batches = 0, 0
+    local reportRetry = newRetryMonitor("Filling empty unlocked pads through hotbar 1")
+    local function finish(displayed, detail)
+        closeRequiredInventory()
+        unitCountSnapshot = {zone = zoneId, summary = displayed}
+        recordMasterUnitCount(zoneId, #displayed)
+        _G.MineHotbarMatchSummary = {zone = zoneId, matchedCount = #displayed,
+            displayedMatchedCount = #displayed, RequiredUnitCount = required}
+        return string.format("%s: placed %d matching units through hotbar 1 in %d batches; %s",
+            zoneId, placed, batches, detail), placed > 0
     end
-    -- Place whitelisted stacks from hotbar slot 1 through 9, regardless of Names order.
-    -- Sort a separate queue so the saved hotbar summary remains unchanged.
-    local placementOrder = {}
-    for _, entry in ipairs(summary) do
-        if allowed[entry.name] and entry.count > 0 then
-            table.insert(placementOrder, entry)
-        end
-    end
-    table.sort(placementOrder, function(a, b)
-        return a.slot < b.slot
-    end)
-    local placed = 0
-    -- Finish this hotbar stack's copies before moving to the next hotbar slot.
-    for _, entry in ipairs(placementOrder) do
-        if allowed[entry.name] then
-            for copy = 1, entry.count do
-                local empty = emptyPlacementSlots(plot)
-                if #empty == 0 then
-                    return string.format("%s: placed %d matching units; all holders filled.", zoneId, placed), placed > 0
-                end
-                local holderName = empty[1] -- Lowest-numbered unlocked empty holder first.
-                placeHotbarUnit(plot, holderName, entry, copy)
+    while true do
+        checkAlive()
+        checkPlot(plot)
+        local empty, displayed, problem = requiredPlacementState(plot, zoneId)
+        if empty then reportRetry(nil, true) end
+        if not empty then
+            reportRetry(problem)
+            pause(CONFIG.General.RetryInterval)
+        elseif #empty == 0 then
+            return finish(displayed, "all unlocked pads filled.")
+        else
+            clearRequiredHotbar(event, plot, "Preparing hotbar 1 batch " .. (batches + 1))
+            openRequiredInventory()
+            local inventory = readRequiredInventory(densityLevel, zoneId, "Counting inventory before the next hotbar 1 batch")
+            local combined = {}
+            for _, entry in ipairs(inventory.summary) do table.insert(combined, entry) end
+            for _, entry in ipairs(displayed) do table.insert(combined, entry) end
+            unitCountSnapshot = {zone = zoneId, summary = combined}
+            local available = inventory.total + #displayed
+            recordMasterUnitCount(zoneId, available)
+            _G.MineHotbarMatchSummary = {zone = zoneId, matchedCount = available,
+                inventoryMatchedCount = inventory.total, displayedMatchedCount = #displayed, RequiredUnitCount = required}
+            if available < required then
+                closeRequiredInventory()
+                return skipPlacement(string.format("%s: inventory=%d, displayed=%d; matched %d, required %d.",
+                    zoneId, inventory.total, #displayed, available, required))
+            end
+            if inventory.total == 0 then
+                return finish(displayed, string.format("%d empty unlocked pads remain; no eligible inventory copies left.", #empty))
+            end
+            local entry = selectRequiredStack(inventory.summary[1])
+            batches = batches + 1
+            -- Consume this selected stack on empty pads before fetching another inventory card.
+            local copies = math.min(entry.count, #empty)
+            for copy = 1, copies do
+                placeHotbarUnit(plot, empty[copy], entry, copy)
                 placed = placed + 1
             end
+            if copies == entry.count and copies < #empty then
+                readStableRequiredHotbar("Confirming hotbar 1 is empty before selecting the next whitelisted stack", function(summary)
+                    return summary[1].name == ""
+                end)
+            end
+            logInfo("Required Units", string.format("%s hotbar 1 batch %d: %s; placed %d copies; %d empty unlocked pads remain.",
+                zoneId, batches, entry.name, copies, #empty - copies))
         end
     end
-    return string.format("%s: placed %d matching units (required %d, available %d).", zoneId, placed, required, matched), placed > 0
 end
 
-local function refreshRequiredHotbar(event, plot, densityLevel, zoneId, phase)
-    setStatus(phase .. ": refreshing hotbar...")
-    for index = 1, 9 do
-        setStatus(string.format("Clearing hotbar slot %d/9...", index))
-        checkPlot(plot)
-        checkAlive()
-        event:FireServer("MineAssignHotbar", tostring(index), "")
-    end
-    pause(CONFIG.Units.HotbarClearDelay) -- Clears must settle before opening/selecting inventory.
-    setStatus("Opening your bag...")
-    -- Clicking an already-open inventory would close it.
-    if not visible(inventoryFrame()) then
-        clickButton(path(playerGui, {"MineGui", "HotbarFrame", "Content", "Container", "InventoryButton"}))
-    end
-    waitUntil(function() return visible(inventoryFrame()) end,
-        ACTION_TIMEOUT, "The inventory did not open after clicking InventoryButton.")
-    pause(UI_SETTLE)
-    clickInventoryItems(densityLevel, zoneId)
-    setStatus("Closing inventory...")
-    clickButton(path(playerGui, {"MineGui", "InventoryFrame", "Content", "Actions", "Close"}))
-    waitUntil(function() return not visible(inventoryFrame()) end,
-        ACTION_TIMEOUT, "Inventory did not close after clicking Content.Actions.Close.")
-    setStatus("Reading hotbar names and counts...")
-    pause(UI_SETTLE) -- Let the final inventory assignment reach the hotbar.
-    return saveAndPrintHotbarSummary()
-end
-
-local function combinedRequiredAvailability(plot, zoneId, hotbarSummary)
+local function combinedRequiredAvailability(plot, zoneId, inventorySummary)
     checkPlot(plot)
     local rule = RequiredUnitsByZone[zoneId] or {RequiredUnitCount = 0, Names = {}}
     local allowed, combined = {}, {}
     for _, name in ipairs(rule.Names or {}) do allowed[name] = true end
-    local hotbarMatched, displayedMatched = 0, 0
-    for _, entry in ipairs(hotbarSummary) do
+    local inventoryMatched, displayedMatched = 0, 0
+    for _, entry in ipairs(inventorySummary) do
         table.insert(combined, entry)
-        if allowed[entry.name] then hotbarMatched = hotbarMatched + entry.count end
+        if allowed[entry.name] then inventoryMatched = inventoryMatched + entry.count end
     end
     local holders, slots = listSlots(plot)
     for _, slot in ipairs(slots) do
@@ -4032,23 +5198,24 @@ local function combinedRequiredAvailability(plot, zoneId, hotbarSummary)
             end
         end
     end
-    local total = hotbarMatched + displayedMatched
+    local total = inventoryMatched + displayedMatched
     recordMasterUnitCount(zoneId, total)
     if modules.mutation and modules.mutation.observeProgress then modules.mutation.observeProgress(zoneId, plot) end
     unitCountSnapshot = {zone = zoneId, summary = combined}
     _G.MineHotbarMatchSummary = {zone = zoneId, matchedCount = total,
-        hotbarMatchedCount = hotbarMatched, displayedMatchedCount = displayedMatched,
+        inventoryMatchedCount = inventoryMatched, displayedMatchedCount = displayedMatched,
         RequiredUnitCount = rule.RequiredUnitCount}
-    logInfo("Required Units", string.format("%s availability: displayed=%d; hotbar=%d; combined=%d/%d.",
-        zoneId, displayedMatched, hotbarMatched, total, rule.RequiredUnitCount))
+    logInfo("Required Units", string.format("%s availability: displayed=%d; inventory=%d; combined=%d/%d.",
+        zoneId, displayedMatched, inventoryMatched, total, rule.RequiredUnitCount))
     local ready, reason = RequiredUnitCountMet(zoneId)
     if not ready then return false, reason end
-    if total == 0 then return false, zoneId .. ": no matching displayed or hotbar units." end
+    if total == 0 then return false, zoneId .. ": no matching displayed or inventory units." end
     return true
 end
 
 local function runRequiredUnits()
-    cycleUnitsPreparedZone = nil
+    unitCountSnapshot, cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil, nil
+    _G.MineHotbarSummary, _G.MineHotbarTotalCount, _G.MineHotbarMatchSummary = nil, nil, nil
     local reason = unitSequenceCooldownReason()
     if reason then
         setStatus("Skipped: " .. reason)
@@ -4067,13 +5234,14 @@ local function runRequiredUnits()
     if not event:IsA("RemoteEvent") then error("GamestateEvent is not a RemoteEvent.", 0) end
     setStatus("Finding your plot...")
     local plot = getMyPlot()
-    local densityLevel = modules.upgrades.getDensity() -- Cached cycle density; inventory filtering still uses density 2+.
-    unitCountSnapshot = nil
+    local densityLevel = modules.upgrades.getDensity()
 
-    -- Start before PASS 1; no displayed units are removed until combined availability passes.
     beginUnitSequence(zoneId)
-    local initialSummary = refreshRequiredHotbar(event, plot, densityLevel, zoneId, "Availability check")
-    local available, availabilityReason = combinedRequiredAvailability(plot, zoneId, initialSummary)
+    clearRequiredHotbar(event, plot, "Availability check")
+    openRequiredInventory()
+    local inventory = readRequiredInventory(densityLevel, zoneId, "Counting whitelisted inventory copies for RequiredUnitCount")
+    closeRequiredInventory()
+    local available, availabilityReason = combinedRequiredAvailability(plot, zoneId, inventory.summary)
     if not available or FinalEquipMode == "Best" or densityLevel == 0 then
         local reason = availabilityReason or (FinalEquipMode == "Best" and "FinalEquipMode is Best." or "density level is 0.")
         return "Skipped: " .. reason .. " Displayed units kept in place; Mutate Units skipped."
@@ -4084,14 +5252,12 @@ local function runRequiredUnits()
     if not root then error("Your character is not ready. Displayed units left in place.", 0) end
     originalRoot, originalCFrame = root, root.CFrame
     local removed = emptyDisplayUnits(plot, "Required count met")
-    -- Removed displayed units are now in inventory: refresh again and use only this final hotbar for placement.
-    local summary = refreshRequiredHotbar(event, plot, densityLevel, zoneId, "Placement preparation")
-    unitCountSnapshot = {zone = zoneId, summary = summary}
-    local finalResult, placedRequiredUnits, selectionReason = finishEquipping(plot, zoneId, summary, densityLevel)
+
+    local finalResult, placedRequiredUnits, selectionReason = finishEquipping(event, plot, zoneId, densityLevel)
     if modules.mutation and modules.mutation.observeProgress then modules.mutation.observeProgress(zoneId, plot) end
     local ready, reason = RequiredUnitCountMet(zoneId)
     if ready and placedRequiredUnits then
-        cycleUnitsPreparedZone = zoneId -- Only a completed placement unlocks Mutate Units.
+        cycleUnitsPreparedZone = zoneId
         logUnitUpgradeDetail("Required Units preparation completed for " .. zoneId
             .. "; required count passed and required units placed. Mutate Units may proceed.")
     else
@@ -4105,13 +5271,9 @@ local function runRequiredUnits()
     return string.format("Removed %d units. %s", removed, finalResult)
 end
 
-
 modules.units = {run = runRequiredUnits}
 end
 
--- Open UpgradeClick and MutationPanel to read affordability only.
--- Roll with GamestateEvent("MineRollMutation", holder.Name), then exit/rescan.
--- Never clicks RollButton, equips, or places a unit.
 do
 local status = stageStatus("mutation")
 local ownsFocus = false
@@ -4139,35 +5301,14 @@ local function mutationPanel()
     return visible(panel) and panel or nil
 end
 local function closeFocus()
-    local focus = focusFrame()
-    if not visible(focus) then ownsFocus = false; return end
-    clickButton(path(focus, {"ExitButton"}))
-    waitUntil(function() return not focus.Parent or not visible(focus) end,
-        CONFIG.Units.ActionTimeout, "Could not close the unit panel with ExitButton.")
+    closeUnitPanel("Closing mutation/unit panel with ExitButton")
     ownsFocus = false
 end
 local function cleanupFocus()
     if not ownsFocus then return end
     local focus = focusFrame()
-    local exit = focus and focus:FindFirstChild("ExitButton")
-    if visible(focus) and exit and exit:IsA("GuiButton") then
-        -- Immediate cleanup works after unload and never yields or rolls.
-        local eventName = CONFIG.General.DefaultClickEvent
-        if type(getconnections) == "function" then
-            local found = false
-            for _, name in ipairs({"MouseButton1Click", "Activated"}) do
-                local ok, handlers = pcall(getconnections, exit[name])
-                if ok and type(handlers) == "table" then
-                    for _, handler in pairs(handlers) do
-                        if handler.Enabled ~= false then eventName = name; found = true; break end
-                    end
-                end
-                if found then break end
-            end
-        end
-        if eventName == "Activated" then pcall(firesignal, exit.Activated, nil, 1)
-        else pcall(firesignal, exit.MouseButton1Click) end
-    end
+    if visible(focus) then pcall(tryUnitExit, focus, "MouseButton1Click") end
+    if visible(focus) then pcall(tryUnitExit, focus, "Activated") end
     ownsFocus = false
 end
 local function scanNow(plot, RequiredUnitCount)
@@ -4224,20 +5365,21 @@ local function scanNow(plot, RequiredUnitCount)
 end
 local function scanStable(plot, RequiredUnitCount)
     local signature, stableSince, problem = nil, os.clock(), "Holder data is still changing."
-    local deadline = os.clock() + CONFIG.General.LoadTimeout
-    repeat
+    local reportRetry = newRetryMonitor("Scanning displayed mutation data")
+    while true do
+        checkAlive()
         local slots, current = scanNow(plot, RequiredUnitCount)
         if not slots then
             problem = current
             signature, stableSince = nil, os.clock()
         else
             if signature ~= current then signature, stableSince = current, os.clock() end
-            if os.clock() - stableSince >= CONFIG.Mutation.RescanSettleTime then return slots end
+            if os.clock() - stableSince >= CONFIG.Mutation.RescanSettleTime then reportRetry(nil, true); return slots end
             problem = "Holder data is still changing."
         end
+        reportRetry(problem)
         pause(CONFIG.General.WaitPoll)
-    until os.clock() >= deadline
-    error("Placed mutation scan timed out: " .. problem .. " No new roll sent.", 0)
+    end
 end
 local function scanRequiredMutations(plot, RequiredUnitCount)
     local slots = scanStable(plot, RequiredUnitCount)
@@ -4265,13 +5407,12 @@ local function lowest(slots)
 end
 local function readMutationRequirements(zoneId)
     local zone = CONFIG.Units.RequiredByZone[zoneId] or {}
-    local rule = zone.RequiredMutations or {Enabled = false}
-    if type(rule.Enabled) ~= "boolean" then error(zoneId .. ": RequiredMutations.Enabled must be boolean.", 0) end
-    if not rule.Enabled then return rule, 0 end
+    local rule = zone.RequiredMutations or {}
     local RequiredUnitCount = requiredSlotCount(zoneId)
     local quotaTotal = 0
-    for rank = diamond + 1, #names do
-        local count = rule[names[rank]] or 0
+    for _, tier in ipairs(names) do
+        local count = rule[tier]
+        if count == nil then count = 0 end
         if type(count) ~= "number" or count ~= count or count < 0 or count % 1 ~= 0 or count == math.huge then
             error(zoneId .. ": RequiredMutations counts must be finite nonnegative whole numbers.", 0)
         end
@@ -4283,21 +5424,19 @@ local function readMutationRequirements(zoneId)
     end
     return rule, RequiredUnitCount
 end
-local function requiredMutationCount(rule, RequiredUnitCount, overrideActive)
-    if not rule.Enabled then return 0 end
+local function requiredMutationCount(rule, RequiredUnitCount)
+    if not hasMutationRequirements(rule) then return 0 end
     return RequiredUnitCount
 end
-local function requirementsMet(slots, rule, RequiredUnitCount, overrideActive)
-    if not rule.Enabled then return true end
+local function requirementsMet(slots, rule, RequiredUnitCount)
+    if not hasMutationRequirements(rule) then return true end
     local required, _, reason = splitUnitSlots(slots, RequiredUnitCount)
     if reason then return false end
     slots = required
     local diamondCount = 0
     for _, slot in ipairs(slots) do if slot.rank >= diamond then diamondCount = diamondCount + 1 end end
-    if diamondCount < requiredMutationCount(rule, RequiredUnitCount, overrideActive) then return false end
-    if overrideActive then return true end
-    -- Quota units also count toward RequiredUnitCount's Diamond-or-higher total.
-    -- Allocate quotas from highest to lowest, never counting a unit twice.
+    if diamondCount < requiredMutationCount(rule, RequiredUnitCount) then return false end
+
     local reserved = 0
     for rank = #names, diamond + 1, -1 do
         reserved = reserved + (rule[names[rank]] or 0)
@@ -4307,8 +5446,8 @@ local function requirementsMet(slots, rule, RequiredUnitCount, overrideActive)
     end
     return true
 end
-local function mutationChoice(slots, rule, RequiredUnitCount, overrideActive)
-    if not rule.Enabled then return nil end
+local function mutationChoice(slots, rule, RequiredUnitCount)
+    if not hasMutationRequirements(rule) then return nil end
     local required, _, reason = splitUnitSlots(slots, RequiredUnitCount)
     if reason then return nil end
     return lowest(required)
@@ -4331,20 +5470,21 @@ local function openSlot(slot, plot)
     fireclickdetector(slot.detector)
     pause(CONFIG.Mutation.AfterUpgradeClickDelay)
     waitUntil(function() return visible(focusFrame()) end,
-        CONFIG.Units.ActionTimeout, slot.holder.Name .. ": unit panel did not open.")
+        CONFIG.Units.ActionTimeout, slot.holder.Name .. ": waiting for unit panel to open.", function() checkPlot(plot); fireclickdetector(slot.detector) end)
     pause(CONFIG.Mutation.PanelSettleTime)
     if not mutationPanel() then
-        local clicked = false
+        local clicked, mutationTabButton = false, nil
         for _, object in ipairs(focusFrame():GetDescendants()) do
             if object:IsA("GuiButton") and visible(object) then
                 local text = object:IsA("TextButton") and object.Text or ""
                 if (object.Name .. " " .. text):lower():find("mutation", 1, true) then
+                    mutationTabButton = object
                     clickButton(object); clicked = true; break
                 end
             end
         end
         if not clicked then error("Could not find the Mutation tab in the unit panel.", 0) end
-        waitUntil(mutationPanel, CONFIG.Units.ActionTimeout, "Mutation tab did not open.")
+        waitUntil(mutationPanel, CONFIG.Units.ActionTimeout, "Waiting for Mutation tab to open.", function() clickButton(mutationTabButton) end)
         pause(CONFIG.Mutation.PanelSettleTime)
     end
 end
@@ -4370,6 +5510,50 @@ local function readFocusedRank()
     if not rank then error(reason, 0) end
     return rank
 end
+local function readStableFocusedMutation(slot, plot, operation)
+    local reportRetry = newRetryMonitor(operation)
+    local lastRank, stableSince
+    while true do
+        checkAlive()
+        checkPlot(plot)
+        if not slot.holder:IsDescendantOf(plot) then
+            error(slot.holder.Name .. ": holder was removed while verifying its current mutation.", 0)
+        end
+        if not mutationPanel() then
+            openSlot(slot, plot)
+            lastRank, stableSince = nil, nil
+        end
+        local ok, current = pcall(readFocusedRank)
+        if ok then
+            if current ~= lastRank then lastRank, stableSince = current, os.clock() end
+            if os.clock() - stableSince >= math.max(CONFIG.Mutation.RescanSettleTime, CONFIG.Mutation.PanelSettleTime) then
+                reportRetry(nil, true)
+                return current
+            end
+            reportRetry("Current panel mutation: " .. names[current] .. "; waiting for a stable reading.")
+        else
+            lastRank, stableSince = nil, nil
+            reportRetry("Cannot read the current mutation panel: " .. tostring(current))
+        end
+        pause(CONFIG.General.WaitPoll)
+    end
+end
+
+local function reconcileMutationObservation(slot, observed, plot)
+    if slot.rank >= observed.rank then return end
+    local displayedRank = slot.rank
+    openSlot(slot, plot)
+    local current = readStableFocusedMutation(slot, plot,
+        string.format("%s: verifying current mutation in the reopened panel (saved=%s, displayed=%s)",
+            slot.holder.Name, names[observed.rank], names[displayedRank]))
+    -- The current panel can be lower too if another queued roll finished after the saved result.
+    -- Use its verified value instead of waiting for an obsolete exact-match label.
+    slot.rank, slot.mutation = current, names[current]
+    logInfo("Mutate Units", string.format("%s: refreshed current mutation from its unit panel: saved=%s, displayed=%s, current=%s.",
+        slot.holder.Name, names[observed.rank], names[displayedRank], names[current]))
+    closeFocus()
+end
+
 local function focusTarget(slots, rule)
     local cumulative = 0
     for rank = #names, diamond + 1, -1 do
@@ -4387,44 +5571,23 @@ local function report(slots, heading)
     end
     logInfo("Mutate Units", heading .. " [" .. table.concat(mutations, ", ") .. "]")
 end
-local function displayOverrideSlot(slots, rule)
-    local config = CONFIG.Mutation.HighTierOverride
-    if type(config.Enabled) ~= "boolean" then error("HighTierOverride.Enabled must be boolean.", 0) end
-    if not config.Enabled then return nil end
-    -- High-tier quotas must be satisfied normally; they cannot use the override.
-    for _, name in ipairs({"Inferno", "Nightmare", "Unreal"}) do
-        if (rule[name] or 0) > 0 then return nil end
-    end
-    local overrideRanks = {}
-    for _, name in ipairs(config.Mutations) do
-        local rank = ranks[name:lower()]
-        if not rank then error("Unknown HighTierOverride mutation: " .. tostring(name), 0) end
-        overrideRanks[rank] = true
-    end
-    for _, slot in ipairs(slots) do
-        if overrideRanks[slot.rank] then return slot end
-    end
-end
-local function recordMasterMutations(zoneId, slots, overrideActive)
+local function recordMasterMutations(zoneId, slots)
     local rule = CONFIG.Units.RequiredByZone[zoneId] or {}
-    local settings = rule.RequiredMutations or {Enabled = false}
+    local settings = rule.RequiredMutations or {}
     local required = rule.RequiredUnitCount or 0
     local requiredSlots = splitUnitSlots(slots, required)
     local allowed, selected = {}, {}
     for _, name in ipairs(rule.Names or {}) do allowed[name] = true end
-    -- Scope holders first, then filter names: extras cannot replace unrelated required units.
+
     for _, slot in ipairs(requiredSlots) do
         local name = readCharacterName(slot.holder)
         if name and allowed[name] then table.insert(selected, slot) end
     end
-    local counts, used = {Diamond = 0, DiamondTotal = 0}, {}
-    for _, slot in ipairs(selected) do
-        if slot.rank >= diamond then counts.DiamondTotal = counts.DiamondTotal + 1 end
-    end
+    local counts, used = {Diamond = 0}, {}
     local quotaTotal = 0
-    -- Allocate distinct units to quotas, highest tier first, exactly as the requirement policy demands.
+
     for rank = #names, diamond + 1, -1 do
-        local goal = settings.Enabled and (settings[names[rank]] or 0) or 0
+        local goal = settings[names[rank]] or 0
         quotaTotal = quotaTotal + goal
         local current = 0
         for index, slot in ipairs(selected) do
@@ -4438,26 +5601,18 @@ local function recordMasterMutations(zoneId, slots, overrideActive)
     local progress = masterRequirementProgress[zoneId] or {}
     masterRequirementProgress[zoneId] = progress
     progress.mutations = counts
-    -- UI override status must also come from a currently whitelisted required unit.
-    -- A gameplay latch may have been triggered by another name, so do not reuse it here.
-    local overrideSlot
-    if settings.Enabled then
-        local ok, slot = pcall(displayOverrideSlot, selected, settings)
-        if ok then overrideSlot = slot end
-    end
-    local diamondGoal = math.max(0, required - (overrideSlot and 1 or quotaTotal))
+
+    local diamondGoal = math.max(0, required - quotaTotal)
     for index, slot in ipairs(selected) do
-        -- Normal: quota units cannot count twice. Override: reserve only its trigger unit.
-        local available = overrideSlot and slot ~= overrideSlot or (not overrideSlot and not used[index])
-        if settings.Enabled and available and slot.rank >= diamond and counts.Diamond < diamondGoal then
+
+        if not used[index] and slot.rank >= diamond and counts.Diamond < diamondGoal then
             counts.Diamond = counts.Diamond + 1
         end
     end
-    progress.override = settings.Enabled and overrideSlot ~= nil or false
     refreshMasterRequirements()
 end
--- Share exact-slot/Diamond validation; overrides apply only without configured high-tier quotas.
-local function upgradeTargets(zoneId, displayed, allowOverride)
+
+local function upgradeTargets(zoneId, displayed)
     local requiredCount = requiredSlotCount(zoneId)
     if requiredCount == 0 then return nil, nil, "RequiredUnitCount is zero." end
     local zone = CONFIG.Units.RequiredByZone[zoneId] or {}
@@ -4488,16 +5643,15 @@ local function upgradeTargets(zoneId, displayed, allowOverride)
         table.insert(core, slot)
         selected[holderName] = true
     end
-    local overrideActive = allowOverride and rule.Enabled and displayOverrideSlot(core, rule) ~= nil
-    if not requirementsMet(core, rule, requiredCount, overrideActive) then
-        return nil, nil, "Required slots do not meet enabled RequiredMutations quotas."
+    if not requirementsMet(core, rule, requiredCount) then
+        return nil, nil, "Required slots do not meet configured RequiredMutations quotas."
     end
     return core, selected
 end
 local function densityReady(zoneId)
     local requiredCount = requiredSlotCount(zoneId)
     if requiredCount == 0 then
-        readMutationRequirements(zoneId) -- Validate configuration even when this zone has no required slots.
+        readMutationRequirements(zoneId)
         return true
     end
     local plot = getMyPlot()
@@ -4518,12 +5672,41 @@ local function densityReady(zoneId)
         if not occupied then return false, holderName .. ": no displayed required unit." end
         table.insert(displayed, {holder = holder, number = number})
     end
-    -- Fresh world labels only: no hotbar totals, saved availability, extras, or latched override.
-    local core, _, reason = upgradeTargets(zoneId, displayed, true)
+
+    local core, _, reason = upgradeTargets(zoneId, displayed)
     return core ~= nil, reason
 end
-modules.mutation = {cleanup = cleanupFocus, upgradeTargets = upgradeTargets, densityReady = densityReady, observeProgress = function(zoneId, plot)
-    -- Read the existing world labels once; no waits, game requests, or panels for display-only progress.
+local function mutateHotbarUnitToUnreal(slot, plot, checkTarget, report)
+    local unreal = assert(ranks.unreal, "CONFIG.Mutation.Priority needs Unreal.")
+    checkTarget(slot, false)
+    slot.pad = path(slot.holder, {"Pad"})
+    slot.detector = path(slot.holder, {"UpgradePart", "UpgradeClick"})
+    openSlot(slot, plot)
+    local rolls = 0
+    local reportRetry = newRetryMonitor("M1: rolling mutations until Unreal")
+    while true do
+        checkAlive()
+        checkTarget(slot, true)
+        if readFocusedRank() >= unreal then break end
+        local panel = assert(mutationPanel(), "Mutation panel is unavailable.")
+        if not canRoll(path(panel, {"Side", "RollButton"})) then
+            error("M1 mutation roll unavailable (red means no money); batch stopped before upgrades.", 0)
+        end
+        report(string.format("%s: mutating to Unreal. Roll: %d", slot.hotbarName or slot.expectedName, rolls + 1))
+        checkTarget(slot, true)
+        checkAlive()
+        getGameEvent():FireServer("MineRollMutation", slot.holder.Name)
+        rolls = rolls + 1
+        reportRetry()
+        pause(CONFIG.Mutation.RapidRollSettleTime)
+        if readFocusedRank() >= unreal then break end
+        pause(CONFIG.Mutation.RapidRollDelay)
+    end
+    reportRetry(nil, true)
+    closeFocus()
+end
+modules.mutation = {cleanup = cleanupFocus, mutateHotbarUnitToUnreal = mutateHotbarUnitToUnreal, upgradeTargets = upgradeTargets, densityReady = densityReady, observeProgress = function(zoneId, plot)
+
     return pcall(function()
         local slots = scanNow(plot, requiredSlotCount(zoneId))
         if slots then recordMasterMutations(zoneId, slots) end
@@ -4534,38 +5717,17 @@ end, run = function()
         return "Skipped: Cached cycle density is 2+ for " .. zoneId .. "; mutation is stopped for this zone."
     end
     local rule, RequiredUnitCount = readMutationRequirements(zoneId)
-    if not rule.Enabled then
-        logUnitUpgradeDetail(zoneId .. ": RequiredMutations.Enabled=false; skipping mutation rolling and higher upgrade quotas. Full Damage still requires Diamond+ in every required slot.")
-        return "Skipped: RequiredMutations.Enabled is false; no mutations required."
+    if not hasMutationRequirements(rule) then
+        return "Skipped: all RequiredMutations tier counts are zero; no mutation rolling required."
     end
-    if requiredMutationCount(rule, RequiredUnitCount, false) == 0 then
+    if requiredMutationCount(rule, RequiredUnitCount) == 0 then
         return "Skipped: RequiredUnitCount and mutation quotas are zero; no mutations required."
     end
     local prepared, preparationReason = unitsPreparedThisCycle(zoneId)
     if not prepared then return "Skipped: " .. preparationReason end
     local countReady, countReason = RequiredUnitCountMet(zoneId)
     if not countReady then return "Skipped: " .. countReason end
-    local overrideConfig = CONFIG.Mutation.HighTierOverride
-    local overrideActive, overrideRanks = false, {}
     local hasHighRequirement = false
-    if type(overrideConfig.Enabled) ~= "boolean" then error("HighTierOverride.Enabled must be boolean.", 0) end
-    for _, name in ipairs(overrideConfig.Mutations) do
-        local rank = ranks[name:lower()]
-        if not rank then error("Unknown HighTierOverride mutation: " .. tostring(name), 0) end
-        overrideRanks[rank] = true
-    end
-    local function updateOverride(currentSlots)
-        if hasHighRequirement or overrideActive or not overrideConfig.Enabled then return end
-        for _, slot in ipairs(currentSlots) do
-            if overrideRanks[slot.rank] then
-                overrideActive = true
-                logInfo("Mutate Units", slot.holder.Name .. " has " .. slot.mutation
-                    .. ": zone quotas bypassed for this mutation run; the first " .. RequiredUnitCount
-                    .. " unlocked holders need Diamond or higher.")
-                return
-            end
-        end
-    end
     for rank = diamond + 1, #names do
         local count = rule[names[rank]] or 0
         if count > 0 and (names[rank] == "Inferno" or names[rank] == "Nightmare" or names[rank] == "Unreal") then
@@ -4579,16 +5741,20 @@ end, run = function()
     originalRoot, originalCFrame = root, root.CFrame
     local slots = scanRequiredMutations(plot, RequiredUnitCount)
     if #slots == 0 then return "No displayed units to mutate." end
-    updateOverride(slots)
-    recordMasterMutations(zoneId, slots, overrideActive)
-    local needed = requiredMutationCount(rule, RequiredUnitCount, overrideActive)
+    recordMasterMutations(zoneId, slots)
+    local needed = requiredMutationCount(rule, RequiredUnitCount)
     if needed > #slots then
         error(string.format("%s: mutation requirements need %d displayed units, but only %d are displayed. No roll sent.",
             zoneId, needed, #slots), 0)
     end
-    report(slots, string.format("Starting mutations for %s on %s: only the first %d unlocked slots need Diamond or higher including applicable quotas; extra slots are excluded.",
-        zoneId, plot.Name, needed))
-    local rolls, loggedFirstRequest = 0, false
+    local tierGoals = {}
+    for _, tier in ipairs(names) do
+        local count = rule[tier] or 0
+        if count > 0 then table.insert(tierGoals, tier .. "=" .. count) end
+    end
+    report(slots, string.format("Starting mutations for %s on %s: first %d unlocked slots need Diamond or higher. Required tier counts: %s. Extra slots are excluded.",
+        zoneId, plot.Name, needed, table.concat(tierGoals, ", ")))
+    local rolls, lastRollingHolder = 0, nil
     local observedRanks = {}
     local function sendRoll(choice)
         checkPlot(plot)
@@ -4598,12 +5764,12 @@ end, run = function()
             error(scopeReason or "Refusing to mutate a holder outside the first required slots.", 0)
         end
         if not choice.holder:IsDescendantOf(plot) then error("Selected holder was removed. No roll sent.", 0) end
-        status.Text = string.format("Rolling %s (%s). Roll: %d", choice.holder.Name, choice.mutation, rolls + 1)
+        status.Text = "Rolling " .. choice.holder.Name
         checkAlive()
         getGameEvent():FireServer("MineRollMutation", choice.holder.Name)
-        if not loggedFirstRequest then
-            logInfo("Mutate Units", "MineRollMutation request sent for " .. choice.holder.Name .. ".")
-            loggedFirstRequest = true
+        if lastRollingHolder ~= choice.holder.Name then
+            logInfo("Mutate Units", "Rolling " .. choice.holder.Name)
+            lastRollingHolder = choice.holder.Name
         end
         rolls = rolls + 1
     end
@@ -4612,53 +5778,45 @@ end, run = function()
         if densityIIZones[zoneId] then return "Skipped: Confirmed Density II stopped mutation for " .. zoneId .. "." end
         slots = scanRequiredMutations(plot, RequiredUnitCount)
         if #slots == 0 then return "No displayed units remain. Rolls: " .. rolls end
-        -- Use the result already read in Current.Word while holder labels catch up.
-        -- This avoids reopening and rerolling the same completed unit.
+
         for _, entry in ipairs(slots) do
             local observed = observedRanks[entry.holder]
             if observed then
-                if entry.rank == observed.rank then observedRanks[entry.holder] = nil
-                elseif os.clock() > observed.expires then
-                    error(entry.holder.Name .. ": displayed label did not catch up to the rapid-roll result; stopped.", 0)
-                else entry.rank, entry.mutation = observed.rank, names[observed.rank] end
+                reconcileMutationObservation(entry, observed, plot)
+                observedRanks[entry.holder] = nil
             end
         end
-        updateOverride(slots)
-        recordMasterMutations(zoneId, slots, overrideActive)
-        if requirementsMet(slots, rule, RequiredUnitCount, overrideActive) then
-            local minimum = requiredMutationCount(rule, RequiredUnitCount, overrideActive)
-            if overrideActive then
-                report(slots, "High-tier override complete; the RequiredUnitCount mutation minimum is met. Excess units need no mutations.")
-                return string.format("%s: high-tier override complete. %d units Diamond or higher required. Rolls: %d.", zoneId, minimum, rolls)
-            end
-            report(slots, "The first RequiredUnitCount unlocked slots meet mutation quotas. Other slots were excluded.")
+        recordMasterMutations(zoneId, slots)
+        if requirementsMet(slots, rule, RequiredUnitCount) then
+            local minimum = requiredMutationCount(rule, RequiredUnitCount)
+            status.Text = zoneId .. ": mutation quota reached."
+            logInfo("Mutate Units", status.Text)
             return string.format("%s: mutation requirements met (%d Diamond-or-higher units required). Rolls: %d.", zoneId, minimum, rolls)
         end
-        local neededNow = requiredMutationCount(rule, RequiredUnitCount, overrideActive)
+        local neededNow = requiredMutationCount(rule, RequiredUnitCount)
         if neededNow > #slots then
             error(string.format("%s: only %d displayed units remain; mutation requirements need %d. No new roll sent.",
                 zoneId, #slots, neededNow), 0)
         end
-        local choice = assert(mutationChoice(slots, rule, RequiredUnitCount, overrideActive), "No mutation candidate is available.")
+        local choice = assert(mutationChoice(slots, rule, RequiredUnitCount), "No mutation candidate is available.")
         local target = hasHighRequirement and focusTarget(slots, rule) or nil
         status.Text = string.format("%s: opening %s (%s). Rolls: %d", zoneId, choice.holder.Name, choice.mutation, rolls)
         openSlot(choice, plot)
         local panel = assert(mutationPanel(), "Mutation panel is unavailable.")
         local button = path(panel, {"Side", "RollButton"})
-        -- The unit panel can disable UpgradeClick detectors while it is open.
-        -- Keep the selection from the closed-panel scan; rescan only after Exit.
+
         if not canRoll(button) then
             closeFocus()
             report(slots, "Roll button is neither green nor orange; no more money for a roll.")
             return string.format("%s: no funds for another roll. Rolls: %d.", zoneId, rolls)
         end
         if hasHighRequirement then
-            -- Same settle/read/retry timing as mutation.luau; stay in this unit.
+
             while alive do
                 local current = readFocusedRank()
                 choice.rank, choice.mutation = current, names[current]
-                observedRanks[choice.holder] = {rank = current, expires = os.clock() + CONFIG.General.LoadTimeout}
-                recordMasterMutations(zoneId, slots, overrideActive)
+                observedRanks[choice.holder] = {rank = current}
+                recordMasterMutations(zoneId, slots)
                 if current >= target then break end
                 local activePanel = assert(mutationPanel(), "Mutation panel is unavailable.")
                 if not canRoll(path(activePanel, {"Side", "RollButton"})) then
@@ -4669,16 +5827,19 @@ end, run = function()
                 pause(CONFIG.Mutation.RapidRollSettleTime)
                 current = readFocusedRank()
                 choice.rank, choice.mutation = current, names[current]
-                observedRanks[choice.holder] = {rank = current, expires = os.clock() + CONFIG.General.LoadTimeout}
-                recordMasterMutations(zoneId, slots, overrideActive)
+                observedRanks[choice.holder] = {rank = current}
+                recordMasterMutations(zoneId, slots)
                 if current >= target then break end
                 pause(CONFIG.Mutation.RapidRollDelay)
             end
             closeFocus()
         else
             sendRoll(choice)
-            -- Normal zones retain their per-roll exit/rescan behavior.
+
             pause(CONFIG.Mutation.RollSettleTime)
+            local current = readStableFocusedMutation(choice, plot, choice.holder.Name .. ": confirming the mutation after rolling")
+            choice.rank, choice.mutation = current, names[current]
+            observedRanks[choice.holder] = {rank = current}
             pause(CONFIG.Mutation.BeforeExitDelay)
             closeFocus()
             pause(CONFIG.Mutation.RollDelay)
@@ -4687,7 +5848,6 @@ end, run = function()
 end}
 end
 
--- UPGRADE UNITS: mutations gate full Damage; early Equip Best only needs ALL exact required slots whitelisted/maxed.
 do
 local status = stageStatus("upgradingUnit")
 local function isDisplayed(holder)
@@ -4696,7 +5856,7 @@ local function isDisplayed(holder)
     local detector = upgrade and upgrade:FindFirstChild("UpgradeClick")
     local prompt = pad and pad:FindFirstChild("HolderPrompt")
     if prompt and prompt:IsA("ProximityPrompt") then
-        -- Pickup/Place describes occupancy; opening Stats can disable UpgradeClick temporarily.
+
         local action = prompt.ActionText:match("^%s*(.-)%s*$"):lower()
         if action == "pick up" then return true end
         if action == "place" then return false end
@@ -4745,7 +5905,7 @@ local function waitForDisplayedUnit(plot, holders, slot)
             if currentName and slot.expectedName and not slot.identitySettleTime then
                 error(slot.holder.Name .. ": displayed unit name changed; stopped before another upgrade request.", 0)
             end
-            return nil -- Hotbar placement/UI transitions may briefly show the previous unit.
+            return nil
         end
         if not isDisplayed(slot.holder) then stableName, stableSince = nil, nil; return nil end
         if slot.identitySettleTime then
@@ -4754,9 +5914,9 @@ local function waitForDisplayedUnit(plot, holders, slot)
         end
         return currentName
     end, CONFIG.Units.ActionTimeout,
-        slot.holder.Name .. ": displayed-unit controls/name did not recover before timeout; stopped upgrading.")
+        slot.holder.Name .. ": displayed-unit controls/name did not recover yet; waiting for controls/name to recover.")
     if not ok then
-        checkAlive() -- Keep Stop/unload cancellation intact.
+        checkAlive()
         if slot.identitySettleTime then
             error(string.format("%s: selected unit did not settle (hotbar slot %s; expected %q, observed %q): %s",
                 slot.holder.Name, tostring(slot.sourceSlot or "--"), tostring(slot.expectedName or "any occupied unit"),
@@ -4773,36 +5933,15 @@ local function statFocusFrame()
     return mine and mine:FindFirstChild("SlotFocusFrame")
 end
 local function closeStatFocus()
-    local focus = statFocusFrame()
-    if not visible(focus) then ownsStatFocus = false; return end
-    clickButton(path(focus, {"ExitButton"}))
-    waitUntil(function() return not focus.Parent or not visible(focus) end,
-        CONFIG.Units.ActionTimeout, "Could not close the unit Stats menu with ExitButton.")
+    closeUnitPanel("Closing unit Stats panel with ExitButton")
     ownsStatFocus = false
-    pause(CONFIG.Units.StatUpgrade.PanelSettleTime) -- Menu visibility can update before world controls recover.
+    pause(CONFIG.Units.StatUpgrade.PanelSettleTime)
 end
 local function cleanupStatFocus()
     if not ownsStatFocus then return end
     local focus = statFocusFrame()
-    local exit = focus and focus:FindFirstChild("ExitButton")
-    if visible(focus) and exit and exit:IsA("GuiButton") then
-        -- Match mutation cleanup: no waits, including after Stop/unload.
-        local eventName = CONFIG.General.DefaultClickEvent
-        if type(getconnections) == "function" then
-            local found = false
-            for _, name in ipairs({"MouseButton1Click", "Activated"}) do
-                local ok, handlers = pcall(getconnections, exit[name])
-                if ok and type(handlers) == "table" then
-                    for _, handler in pairs(handlers) do
-                        if handler.Enabled ~= false then eventName = name; found = true; break end
-                    end
-                end
-                if found then break end
-            end
-        end
-        if eventName == "Activated" then pcall(firesignal, exit.Activated, nil, 1)
-        else pcall(firesignal, exit.MouseButton1Click) end
-    end
+    if visible(focus) then pcall(tryUnitExit, focus, "MouseButton1Click") end
+    if visible(focus) then pcall(tryUnitExit, focus, "Activated") end
     ownsStatFocus = false
 end
 local function createUnitStatSession(plot, minimum)
@@ -4819,11 +5958,11 @@ local function createUnitStatSession(plot, minimum)
             error("Character changed during unit upgrades; run again after respawning.", 0)
         end
         if not menuOpen then waitForDisplayedUnit(plot, holders, slot) end
-        -- Cached levels select upgrades; live identity checks still guard every focused request.
+
         local damageLevel = slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder)
         local currentName = readCharacterName(slot.holder)
         if menuOpen and slot.matchesName and not slot.matchesName(currentName, slot.expectedName) then
-            currentName = waitForDisplayedUnit(plot, holders, slot) -- No purchase while identity is uncertain.
+            currentName = waitForDisplayedUnit(plot, holders, slot)
         end
         local matches = slot.matchesName and slot.matchesName(currentName, slot.expectedName)
             or not slot.matchesName and currentName == slot.expectedName
@@ -4878,7 +6017,7 @@ local function createUnitStatSession(plot, minimum)
         waitUntil(function()
             checkTarget(slot, false)
             return detector.MaxActivationDistance > 0
-        end, CONFIG.Units.ActionTimeout, slot.holder.Name .. ": UpgradeClick did not reactivate before timeout.")
+        end, CONFIG.Units.ActionTimeout, slot.holder.Name .. ": UpgradeClick has not reactivated yet.")
         root.CFrame = CFrame.new(upgrade.Position + Vector3.new(0, settings.TeleportHeight, 0), upgrade.Position)
         root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
         pause(settings.TeleportDelay)
@@ -4887,20 +6026,29 @@ local function createUnitStatSession(plot, minimum)
         fireclickdetector(detector)
         pause(settings.AfterUpgradeClickDelay)
         waitUntil(function() return visible(statFocusFrame()) end,
-            CONFIG.Units.ActionTimeout, slot.holder.Name .. ": unit Stats menu did not open.")
+            CONFIG.Units.ActionTimeout, slot.holder.Name .. ": waiting for unit Stats menu to open.", function() checkTarget(slot, false); fireclickdetector(detector) end)
         pause(settings.PanelSettleTime)
         local label = path(statFocusFrame(), {"Tabs", "StatsTab", "Content", "Row", "Label"})
-        -- Label may be text inside the clickable tab; climb only as far as StatsTab.
+
         local tab = path(statFocusFrame(), {"Tabs", "StatsTab"})
         local button = label
         while button ~= tab and not button:IsA("GuiButton") do button = button.Parent end
         clickButton(button)
-        waitUntil(statsPanel, CONFIG.Units.ActionTimeout, "Stats tab did not open.")
+        waitUntil(statsPanel, CONFIG.Units.ActionTimeout, "Waiting for Stats tab to open.", function() clickButton(button) end)
         pause(settings.PanelSettleTime)
     end
     return {open = open, readStat = readStat, canUpgrade = canUpgrade, checkTarget = checkTarget}
 end
 
+local function unitDamageBatchSize(zoneId)
+    local rule = CONFIG.Units.RequiredByZone[zoneId] or {}
+    local size = rule.DamageBatchSize
+    if size == nil then size = 5 end
+    if type(size) ~= "number" or size ~= size or size < 1 or size % 1 ~= 0 or size == math.huge then
+        error(zoneId .. ": DamageBatchSize must be a finite positive whole number.", 0)
+    end
+    return size
+end
 local function minimumStatDamageLevel()
     local minimum = CONFIG.Units.StatUpgrade.MinimumDamageLevel
     if type(minimum) ~= "number" or minimum ~= minimum or minimum < 1 or minimum % 1 ~= 0 or minimum == math.huge then
@@ -4955,18 +6103,31 @@ local upgradeDisplayedStats
 local stageSpeedRequests, stageMiningRequests = 0, 0
 local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, options)
     options = options or {}
-    closeStatFocus() -- Close before scanning: an open menu can disable UpgradeClick detectors.
+    local damageBatchSize = options.damageBatchSize or 5
+    closeStatFocus()
     local holders = path(plot, {"Holders"})
     local event = getGameEvent()
     local settings = CONFIG.Units.StatUpgrade
     local damageRequests, session = 0, nil
     local minimum = options.balanceStats and minimumStatDamageLevel() or nil
-    local damageBatchTarget, statsReady = nil, true
+    local statsReady, caughtUpLevels = true, {}
     local cache = options.cache or (minimum and getUnitUpgradeCache(plot))
     if cache then session = cache.session end
     local function checkSlot(slot)
         local currentName = waitForDisplayedUnit(plot, holders, slot)
         slot.expectedName = slot.expectedName or currentName
+    end
+    local function catchUpSlot(slot)
+        if minimum and slot.level >= minimum and caughtUpLevels[slot.holder] ~= slot.level then
+            local _, _, _, ready = upgradeDisplayedStats(plot, cache, slot.holder)
+            statsReady = ready
+            if not ready then
+                stageText.Text = slot.holder.Name .. ": Damage paused until Speed/Mining catch up to its current Damage level."
+                return false
+            end
+            caughtUpLevels[slot.holder] = slot.level
+        end
+        return true
     end
     logUnitUpgradeDetail(heading .. ": " .. #slots .. " displayed units.")
     for _, slot in ipairs(slots) do
@@ -4974,48 +6135,47 @@ local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, optio
         if cache then attachCachedUnit(cache, slot) end
         local level = slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder)
         slot.startLevel, slot.level = level, level
-        slot.remaining, slot.damageRequests = math.max(0, cap - level), 0
+        slot.damageCap = cap
+        if options.halfDamageMaximum then
+            local maximum = slot.cachedStats and slot.cachedStats.Damage.maximum
+            if type(maximum) ~= "number" or maximum ~= maximum or maximum < 1
+                or maximum % 1 ~= 0 or maximum == math.huge then
+                error(slot.holder.Name .. ": actual maximum Damage level is missing or invalid; extra Damage stopped.", 0)
+            end
+            slot.damageCap = math.floor(maximum / 2)
+        end
+        slot.remaining, slot.damageRequests = math.max(0, slot.damageCap - level), 0
         slot.damageUnavailable = false
     end
     while alive do
-        local choice, lowestLevel
+        local choice
         for _, slot in ipairs(slots) do
             if not cache then checkSlot(slot) end
             slot.level = slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder)
-            lowestLevel = math.min(lowestLevel or slot.level, slot.level)
-            if slot.level >= cap then slot.remaining = 0 end
+            if slot.level >= slot.damageCap then slot.remaining = 0 end
             if slot.remaining > 0 and not slot.damageUnavailable and (not choice or slot.level < choice.level
                 or (slot.level == choice.level and slot.number < choice.number)) then choice = slot end
         end
-        if minimum and lowestLevel and lowestLevel >= minimum
-            and (not damageBatchTarget or lowestLevel >= damageBatchTarget or not choice) then
-            local _, _, _, ready = upgradeDisplayedStats(plot, cache)
-            statsReady = ready
-            if not ready then
-                stageText.Text = "Damage paused: eligible Speed/MineSpeed have not caught up to current Damage levels."
-                break
-            end
-            damageBatchTarget = lowestLevel + 5
+        if not choice then
+            -- Already-maxed units still need catch-up before extras may receive Damage.
+            for _, slot in ipairs(slots) do if not catchUpSlot(slot) then break end end
+            break
         end
-        if not choice then break end
-        -- Finish this shared Damage batch before starting a higher batch.
-        if minimum and choice.level >= minimum
-            and (not damageBatchTarget or choice.level >= damageBatchTarget) then break end
+        if not catchUpSlot(choice) then break end
         session = session or createUnitStatSession(plot, 1)
         session.open(choice)
-        local batchSize = math.min(5, choice.remaining)
-        if minimum then
-            batchSize = math.min(batchSize, (damageBatchTarget or minimum) - choice.level)
+        local batchSize = math.min(damageBatchSize, choice.remaining)
+        if minimum and choice.level < minimum then
+            batchSize = math.min(batchSize, minimum - choice.level)
         end
-        local batchStartLevel = choice.level
         for _ = 1, batchSize do
             local before = choice.cachedStats and choice.cachedStats.Damage or session.readStat(choice, "Damage")
             choice.level = before.level
-            if cache and before.level < cap then before.upgradeable = session.canUpgrade(choice, "Damage") end
-            if before.level >= cap then choice.remaining = 0; break end
+            if cache and before.level < choice.damageCap then before.upgradeable = session.canUpgrade(choice, "Damage") end
+            if before.level >= choice.damageCap then choice.remaining = 0; break end
             if not before.upgradeable then choice.damageUnavailable = true; break end
             stageText.Text = string.format("%s: Damage %d -> %d (cap %d); button green",
-                choice.holder.Name, before.level, before.level + 1, cap)
+                choice.holder.Name, before.level, before.level + 1, choice.damageCap)
             session.checkTarget(choice, true)
             checkAlive()
             event:FireServer("MineUpgradeCharacter", choice.holder.Name, "Damage")
@@ -5028,28 +6188,30 @@ local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, optio
                 after = session.readStat(choice, "Damage")
                 if cache then choice.cachedStats.Damage = after end
                 return after.level > before.level or not after.upgradeable
-            end, CONFIG.Units.ActionTimeout, choice.holder.Name .. ": Damage request produced no level/color response.")
+            end, CONFIG.Units.ActionTimeout, choice.holder.Name .. ": waiting for Damage level/color response.", function()
+                session.checkTarget(choice, true)
+                local latest = session.readStat(choice, "Damage")
+                if latest.level <= before.level and latest.upgradeable then
+                    event:FireServer("MineUpgradeCharacter", choice.holder.Name, "Damage")
+                    damageRequests = damageRequests + 1
+                    choice.damageRequests = choice.damageRequests + 1
+                end
+            end)
             choice.level = after.level
-            if after.level >= cap then choice.remaining = 0; break end
+            if after.level >= choice.damageCap then choice.remaining = 0; break end
             if not after.upgradeable then choice.damageUnavailable = true; break end
         end
-        -- Damage can unlock higher stat maxima. Refresh only this upgraded unit
-        -- once after its batch when a cached maximum would limit catch-up.
-        if cache and choice.level > batchStartLevel then
-            for _, stat in ipairs({"Speed", "MineSpeed"}) do
-                if choice.cachedStats[stat].maximum < choice.level then
-                    choice.cachedStats[stat] = session.readStat(choice, stat == "MineSpeed" and "Mining" or stat)
-                end
-            end
-        end
+
         pause(settings.BeforeExitDelay)
-        closeStatFocus() -- Required-slot confirmation and the next selection need live displayed detectors.
+        closeStatFocus()
+        -- Finish this unit's Speed/Mining catch-up before any other Damage batch.
+        if not catchUpSlot(choice) then break end
     end
     if options.confirmCap and damageRequests > 0 then pause(settings.PanelSettleTime) end
-    if not cache then -- Keep the separate Upgrade Old Units summaries.
+    if not cache then
         for _, slot in ipairs(slots) do
             local summary = string.format("Unit slot %d done upgrading: Damage requested %d times; level %d -> %d (target %d)",
-                slot.number, slot.damageRequests, slot.startLevel, slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder), cap)
+                slot.number, slot.damageRequests, slot.startLevel, slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder), slot.damageCap)
             if slot.damageUnavailable then summary = summary .. "; stopped because Damage button is not green" end
             logInfo(options.scope or "Upgrade Units", summary .. ".")
         end
@@ -5100,7 +6262,7 @@ modules.upgradingOldUnit = {run = function()
     return string.format("%s: processed %d displayed units from %s Names only; sent %d Damage requests. Old-unit target level: %d.",
         zoneId, #slots, previousZoneId, damageRequests, cap)
 end}
--- Live required-slot eligibility gates full Damage; failed gates retain the whitelist level-10 pass.
+
 local function upgradeZoneDamage(plot, zoneId, densityLevel, cache)
     local holders = path(plot, {"Holders"})
     local rule = CONFIG.Units.RequiredByZone[zoneId] or {}
@@ -5119,34 +6281,14 @@ local function upgradeZoneDamage(plot, zoneId, densityLevel, cache)
     end
     local displayed = scanDisplayed()
     local cap = unitLevelCap(zoneId)
-    local requiredCount = requiredSlotCount(zoneId)
-    local byHolder = {}
-    for _, slot in ipairs(displayed) do byHolder[slot.holder.Name] = slot end
-    local preEquipCoreMaxed = requiredCount > 0
-    for number = 1, requiredCount do
-        local slot = byHolder["M" .. tostring(number)]
-        local name = slot and readCharacterName(slot.holder)
-        if not slot or not name or not allowed[name] or readLevel(slot.holder) < cap then
-            preEquipCoreMaxed = false
-            break
-        end
-    end
-    -- Keep Damage authorization separate: early Equip Best never bypasses mutation requirements.
-    local core, requiredNames, eligibilityReason = modules.mutation.upgradeTargets(zoneId, displayed, true)
-    if preEquipCoreMaxed then
-        status.Text = "All required slots are whitelisted and at max cap; equipping best..."
-        requestCycleBestEquip(true)
-        logUnitUpgradeDetail(zoneId .. ": ALL exact required slots are whitelisted and at cap; early Equip Best requested without a mutation or density gate. Cycle-end Equip Best remains enabled.")
-        checkPlot(plot)
-        holders = path(plot, {"Holders"})
-        displayed = scanDisplayed()
-    end
+    local damageBatchSize = unitDamageBatchSize(zoneId)
+    local core, requiredNames, eligibilityReason = modules.mutation.upgradeTargets(zoneId, displayed)
     local cacheTargets = {}
     local minimum = minimumStatDamageLevel()
     for _, slot in ipairs(displayed) do
         slot.initialDamageLevel = readLevel(slot.holder)
         local name = readCharacterName(slot.holder)
-        -- Include existing stat-eligible units and units this pass may raise to the threshold.
+
         if slot.initialDamageLevel >= minimum or allowed[name]
             or (core and not requiredNames[slot.holder.Name]) then
             table.insert(cacheTargets, slot)
@@ -5164,31 +6306,14 @@ local function upgradeZoneDamage(plot, zoneId, densityLevel, cache)
         end
         if #matches == 0 then return zoneId .. ": full Damage locked (" .. eligibilityReason .. "); no displayed whitelisted units for level-10 Damage." end
         local damageRequests = upgradeDisplayedSlots(plot, matches, 10, status,
-            "Required-slot gate failed: matching units Damage to level 10", {cache = cache})
+            "Required-slot gate failed: matching units Damage to level 10", {cache = cache, damageBatchSize = damageBatchSize})
         return string.format("%s density %d: full Damage locked (%s); processed %d whitelisted units; sent %d Damage requests. Cap: 10.",
             zoneId, densityLevel, eligibilityReason, #matches, damageRequests)
-    end
-    local function matchingCore(slots)
-        local matches = {}
-        for _, slot in ipairs(slots) do
-            if requiredNames[slot.holder.Name] then
-                local name = readCharacterName(slot.holder)
-                if name and allowed[name] then
-                    slot.expectedName = name
-                    table.insert(matches, slot)
-                end
-            end
-        end
-        return matches
-    end
-    if preEquipCoreMaxed then
-        -- Full Damage eligibility was independently confirmed before Equip Best.
-        core = matchingCore(displayed)
     end
     local damageRequests, statsReady = 0, true
     if #core > 0 then
         damageRequests, statsReady = upgradeDisplayedSlots(plot, core, cap, status,
-            "Required-slot gate passed: whitelisted required units Damage to zone cap", {confirmCap = true, balanceStats = true, cache = cache})
+            "Required-slot gate passed: whitelisted required units Damage to zone cap", {confirmCap = true, balanceStats = true, cache = cache, damageBatchSize = damageBatchSize})
     end
     if not statsReady then
         return string.format("%s: sent %d Damage requests; extra Damage locked while eligible Speed/MineSpeed catch up.",
@@ -5203,46 +6328,55 @@ local function upgradeZoneDamage(plot, zoneId, densityLevel, cache)
                 zoneId, damageRequests, #core, slot.holder.Name, cap)
         end
     end
-    if not preEquipCoreMaxed then
-        local confirmed, _, reason = modules.mutation.upgradeTargets(zoneId, scanDisplayed(), true)
-        if not confirmed then return zoneId .. ": extra Damage locked after core upgrades: " .. reason end
-    end
+    local confirmed, _, reason = modules.mutation.upgradeTargets(zoneId, scanDisplayed())
+    if not confirmed then return zoneId .. ": extra Damage locked after core upgrades: " .. reason end
     local extras = {}
     for _, holder in ipairs(holders:GetChildren()) do
         local number = tonumber(holder.Name:match("^M(%d+)$"))
         if number and number >= 1 and not requiredNames[holder.Name] and isDisplayed(holder)
-            and cache.byHolder[holder] and cache.byHolder[holder].cachedStats.Damage.level < cap then
+            and cache.byHolder[holder] then
             table.insert(extras, {holder = holder, number = number, expectedName = readCharacterName(holder)})
         end
     end
     table.sort(extras, function(a, b) return a.number < b.number end)
     if #extras > 0 then
-        local extraRequests, extrasReady = upgradeDisplayedSlots(plot, extras, cap, status,
-            "Required matching units maxed: extra units Damage to zone cap", {confirmCap = true, balanceStats = true, cache = cache})
+        local extraRequests, extrasReady = upgradeDisplayedSlots(plot, extras, nil, status,
+            "Required matching units maxed: extra units Damage to half their own actual maximum", {confirmCap = true, balanceStats = true, halfDamageMaximum = true, cache = cache, damageBatchSize = damageBatchSize})
         damageRequests = damageRequests + extraRequests
         if not extrasReady then
             return string.format("%s: sent %d Damage requests; extra Damage paused while eligible Speed/MineSpeed catch up.",
                 zoneId, damageRequests)
         end
     end
-    return string.format("%s density %d: processed %d matching required units and %d below-cap extras; sent %d Damage requests. Cap: %d.",
+    return string.format("%s density %d: processed %d matching required units and %d extras; sent %d Damage requests. Required cap: %d; extras stop at half their own actual maximum Damage level.",
         zoneId, densityLevel, #core, #extras, damageRequests, cap)
 end
 
-upgradeDisplayedStats = function(plot, cache)
-    closeStatFocus() -- An open menu can temporarily disable all UpgradeClick detectors.
+upgradeDisplayedStats = function(plot, cache, onlyHolder)
+    closeStatFocus()
     local settings = CONFIG.Units.StatUpgrade
     local minimum = minimumStatDamageLevel()
     cache = getUnitUpgradeCache(plot, cache)
     local eligible = {}
     for _, entry in ipairs(cache.slots) do
-        if entry.cachedStats.Damage.level >= minimum then
+        if entry.cachedStats.Damage.level >= minimum and (not onlyHolder or entry.holder == onlyHolder) then
             table.insert(eligible, {holder = entry.holder, number = entry.number, expectedName = entry.expectedName,
                 cachedStats = entry.cachedStats, target = entry.cachedStats.Damage.level})
         end
     end
     if #eligible == 0 then return 0, 0, 0, true end
     local session = cache.session
+    if onlyHolder then
+        -- Damage can raise stat maxima; do not keep an old level-11 limit cached.
+        for _, slot in ipairs(eligible) do
+            session.open(slot)
+            for _, stat in ipairs({"Speed", "MineSpeed"}) do
+                slot.cachedStats[stat] = session.readStat(slot, stat == "MineSpeed" and "Mining" or stat)
+            end
+            pause(settings.BeforeExitDelay)
+            closeStatFocus()
+        end
+    end
     local function needsUpgrade(slot, state)
         return state.level < math.min(slot.target, state.maximum)
     end
@@ -5286,7 +6420,14 @@ upgradeDisplayedStats = function(plot, cache)
                             local after = session.readStat(slot, stat == "MineSpeed" and "Mining" or stat)
                             slot.cachedStats[stat] = after
                             return after.level > before.level or not after.upgradeable
-                        end, CONFIG.Units.ActionTimeout, slot.holder.Name .. ": " .. stat .. " request produced no level/color response.")
+                        end, CONFIG.Units.ActionTimeout, slot.holder.Name .. ": waiting for " .. stat .. " level/color response.", function()
+                            session.checkTarget(slot, true)
+                            local latest = session.readStat(slot, stat == "MineSpeed" and "Mining" or stat)
+                            if latest.level <= before.level and latest.upgradeable then
+                                event:FireServer("MineUpgradeCharacter", slot.holder.Name, stat)
+                                if stat == "Speed" then totalSpeed = totalSpeed + 1 else totalMining = totalMining + 1 end
+                            end
+                        end)
                         if slot.cachedStats[stat].level > before.level then progressed = true end
                     end
                 end
@@ -5294,7 +6435,7 @@ upgradeDisplayedStats = function(plot, cache)
                 closeStatFocus()
             end
         end
-        -- An unavailable lower stat blocks the next shared batch and further Damage.
+
         if not progressed then break end
     end
     stageSpeedRequests = stageSpeedRequests + totalSpeed
@@ -5302,11 +6443,10 @@ upgradeDisplayedStats = function(plot, cache)
     return #eligible, totalSpeed, totalMining, ready
 end
 
--- Standalone Master-tab hotbar batch; shares the controller, placement and Stats guards.
 do
     local selected, entries, optionConnections, optionRenderers = {}, {}, {}, {}
     local card = make("Frame", pages.master.frame, {
-        Name = "HotbarUpgrades", Position = UDim2.fromOffset(18, masterStageBottom + 200),
+        Name = "HotbarUpgrades", Position = UDim2.fromOffset(18, masterStageBottom + 268),
         Size = UDim2.new(1, -36, 0, 226), BackgroundColor3 = colors.bg, BorderSizePixel = 0,
     })
     corner(card)
@@ -5467,7 +6607,7 @@ do
                 if current.name ~= entry.name or current.count == 0 then
                     error("Selected hotbar slot " .. entry.slot .. " changed; refresh and select again.", 0)
                 end
-                table.insert(queue, current) -- Snapshot once: returned units never extend this batch.
+                table.insert(queue, current)
             end
         end
         if #queue == 0 then error("Select at least one hotbar unit first.", 0) end
@@ -5497,7 +6637,7 @@ do
             local detector = upgrade and upgrade:FindFirstChild("UpgradeClick")
             if detector and detector:IsA("ClickDetector") and detector.MaxActivationDistance > 0
                 and readCharacterName(holder) then return "pick up" end
-            -- Empty holders may say "Equip a unit" (or nothing) until a hotbar unit is selected.
+
             if compact:match("^equip") or compact:match("^select.*unit") or compact == "" then
                 local pad = holder:FindFirstChild("Pad")
                 local holderLabel = pad and pad:FindFirstChild("HolderLabel")
@@ -5506,7 +6646,7 @@ do
                 if detector and detector:IsA("ClickDetector") and detector.MaxActivationDistance <= 0
                     and not labelShown then return "place" end
             end
-            return nil -- Unrecognized/transient text is not evidence that M1 is locked.
+            return nil
         end
         local function waitForM1Action()
             local stable, since
@@ -5525,8 +6665,9 @@ do
             error(string.format("M1 prompt is not ready (ActionText=%q, Enabled=%s). %s",
                 tostring(current.ActionText), tostring(current.Enabled), tostring(result)), 0)
         end
-        -- Follow peter_script's working Pad -> number key -> HolderPrompt sequence.
-        local function moveToM1()
+
+        local lastM1RetryAngle
+        local function moveToM1(isRetry)
             checkAlive()
             checkPlot(plot)
             if not player.Character or not root:IsDescendantOf(player.Character) then
@@ -5536,13 +6677,21 @@ do
             if not base or not base:IsA("BasePart") then base = holder:FindFirstChild("UpgradePart") end
             if not base or not base:IsA("BasePart") then base = holder:FindFirstChildWhichIsA("BasePart") end
             if not base then error("M1 has no placement base.", 0) end
-            root.CFrame = CFrame.new(base.Position + Vector3.new(0, 3, 0), base.Position)
+            local offset = Vector3.zero
+            if isRetry then
+                local angle = math.random(0, 359)
+                if angle == lastM1RetryAngle then angle = (angle + 1) % 360 end
+                lastM1RetryAngle = angle
+                local radians = math.rad(angle)
+                offset = Vector3.new(math.cos(radians), 0, math.sin(radians))
+            end
+            root.CFrame = CFrame.new(base.Position + Vector3.new(0, 3, 0) + offset, base.Position)
             root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
             pause(CONFIG.HotbarUpgrade.Placement.TeleportDelay)
         end
         local function placeIntoM1(entry, copy)
             closeStatFocus()
-            pause(0.2) -- Same focus-close pause as peter_script's M1 flow.
+            pause(0.2)
             moveToM1()
             if waitForM1Action() ~= "place" then error("M1 must be empty before placing the next selected copy.", 0) end
             if UserInputService:GetFocusedTextBox() then error("Leave the text field before placing units.", 0) end
@@ -5566,7 +6715,9 @@ do
                 local value = prompt()
                 if action() ~= "place" then error("M1 occupancy changed before placement; stopped.", 0) end
                 return value.Enabled and value
-            end, math.huge, "M1 placement prompt did not become available.")
+            end, math.huge, "M1 placement prompt did not become available.", function()
+                if action() == "place" then moveToM1(true) end
+            end)
             local beforePrompt = readStableEntry(entry.slot)
             if beforePrompt.name ~= entry.name or beforePrompt.count ~= source.count then
                 error("Selected hotbar slot changed while equipping; stopped before placement.", 0)
@@ -5580,20 +6731,34 @@ do
             waitUntil(function()
                 if action() ~= "pick up" then return nil end
                 local remaining = readEntry(entry.slot)
-                -- Confirm this selected stack supplied a copy; do not compare two different UI names.
+
                 return remaining.name == "" or remaining.name == entry.name and remaining.count < source.count
-            end, math.huge, "M1 placement did not confirm occupancy and consumption of the selected hotbar copy.")
+            end, math.huge, "M1: waiting for placement and consumption of the selected hotbar copy.", function()
+                if action() ~= "place" then return end
+                local remaining = readEntry(entry.slot)
+                if remaining.name ~= entry.name or remaining.count ~= source.count then return end
+                moveToM1(true)
+                if action() ~= "place" then return end
+                remaining = readEntry(entry.slot)
+                if remaining.name ~= entry.name or remaining.count ~= source.count then return end
+                local retryPrompt = prompt()
+                if retryPrompt.Enabled then
+                    heldPrompt = retryPrompt
+                    retryPrompt:InputHoldBegin()
+                    pause(math.max(retryPrompt.HoldDuration or 0, 0.05))
+                    releaseInputs()
+                end
+            end)
             local slot = selectedSlot(nil, entry.slot)
             slot.holder, slot.hotbarName = holder, entry.name
-            -- The hotbar ItemName and world CharName may use different display names.
-            -- Bind the stable M1 name only AFTER the selected slot's placement is confirmed.
+
             slot.expectedName = waitForDisplayedUnit(plot, path(plot, {"Holders"}), slot)
             return slot
         end
 
         local function clearM1(expectedName)
             closeStatFocus()
-            -- Approach and unequip first: a remote/unselected prompt can still show stale text.
+
             moveToM1()
             local equippedHumanoid = player.Character:FindFirstChildOfClass("Humanoid")
             if equippedHumanoid then equippedHumanoid:UnequipTools() end
@@ -5601,13 +6766,15 @@ do
             local guard = selectedSlot(expectedName)
             guard.holder = holder
             guard.expectedName = waitForDisplayedUnit(plot, path(plot, {"Holders"}), guard)
+            local pickupAttempts = 0
             while true do
                 if waitForM1Action() == "place" then return end
                 waitForDisplayedUnit(plot, path(plot, {"Holders"}), guard)
                 if not player.Character or not root:IsDescendantOf(player.Character) then error("Character changed during pickup.", 0) end
                 local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
                 if humanoid then humanoid:UnequipTools() end
-                moveToM1()
+                moveToM1(pickupAttempts > 0)
+                pickupAttempts = pickupAttempts + 1
                 local current = prompt()
                 if action() == "place" then return end
                 waitForDisplayedUnit(plot, path(plot, {"Holders"}), guard)
@@ -5616,7 +6783,22 @@ do
                     current:InputHoldBegin()
                     pause(math.max(current.HoldDuration, CONFIG.Units.RemovalMinimumHold) + CONFIG.Units.RemovalHoldPadding)
                     releaseInputs()
-                    waitUntil(function() return action() == "place" end, math.huge)
+                    waitUntil(function() return action() == "place" end, math.huge, "M1: waiting for pickup to complete.", function()
+                        if action() ~= "pick up" then return end
+                        local currentName = readCharacterName(holder)
+                        if not currentName or not guard.matchesName(currentName, guard.expectedName) then return end
+                        moveToM1(true)
+                        if action() ~= "pick up" then return end
+                        currentName = readCharacterName(holder)
+                        if not currentName or not guard.matchesName(currentName, guard.expectedName) then return end
+                        local retryPrompt = prompt()
+                        if action() == "pick up" and retryPrompt.Enabled then
+                            heldPrompt = retryPrompt
+                            retryPrompt:InputHoldBegin()
+                            pause(math.max(retryPrompt.HoldDuration, CONFIG.Units.RemovalMinimumHold) + CONFIG.Units.RemovalHoldPadding)
+                            releaseInputs()
+                        end
+                    end)
                     pause(CONFIG.Units.DisplayRemoveDelay)
                     return
                 end
@@ -5634,7 +6816,7 @@ do
                     before = waitUntil(function()
                         local current = session.readStat(slot, row)
                         return (current.level >= cap or current.upgradeable) and current
-                    end, math.huge)
+                    end, math.huge, "M1: waiting for " .. stat .. " upgrade availability.")
                     if before.level >= cap then break end
                 end
                 report(string.format("%s: %s %d -> %d", slot.hotbarName or slot.expectedName, stat, before.level, cap))
@@ -5646,7 +6828,13 @@ do
                 waitUntil(function()
                     after = session.readStat(slot, row)
                     return after.level > before.level
-                end, math.huge)
+                end, math.huge, "M1: waiting for " .. stat .. " level response.", function()
+                    session.checkTarget(slot, true)
+                    local latest = session.readStat(slot, row)
+                    if latest.level <= before.level and latest.upgradeable then
+                        event:FireServer("MineUpgradeCharacter", "M1", stat)
+                    end
+                end)
                 before = after
             end
             return before
@@ -5656,7 +6844,7 @@ do
         local inventory = mine and mine:FindFirstChild("InventoryFrame")
         if visible(inventory) then
             clickButton(path(inventory, {"Content", "Actions", "Close"}))
-            waitUntil(function() return not visible(inventory) end, math.huge, "Close inventory before running hotbar upgrades.")
+            waitUntil(function() return not visible(inventory) end, math.huge, "Waiting for inventory to close before Hotbar Upgrades.", function() clickButton(path(inventory, {"Content", "Actions", "Close"})) end)
         end
         for _, entry in ipairs(queue) do
             for copy = 1, entry.count do
@@ -5665,25 +6853,26 @@ do
                 if current.count == 0 and (current.name == "" or current.name == entry.name) then break end
                 if current.name ~= entry.name then return "Stopped: selected hotbar slot " .. entry.slot .. " changed. Completed " .. completed .. " units." end
                 clearM1()
-                -- Pickup can update the hotbar; recheck selection immediately before placement.
+
                 current = readStableEntry(entry.slot)
                 if current.name ~= entry.name or current.count == 0 then return "Stopped: selected hotbar slot " .. entry.slot .. " changed. Completed " .. completed .. " units." end
                 local slot = placeIntoM1(entry, copy)
+                modules.mutation.mutateHotbarUnitToUnreal(slot, plot, session.checkTarget, report)
                 session.open(slot)
-                pause(0.3) -- Let the opened Stats tab settle, as the reference does after opening M1.
+                pause(0.3)
                 while true do
                     upgradeTo(slot, "Speed")
                     upgradeTo(slot, "MineSpeed")
                     local damage = session.readStat(slot, "Damage")
                     if damage.level >= target then break end
                     if damage.level >= damage.maximum then error("M1 Damage maximum is below the configured target; batch stopped.", 0) end
-                    -- Raising Damage can unlock another Speed/Mining level; finish those first.
+
                     upgradeTo(slot, "Damage", damage.level + 1)
                 end
                 pause(CONFIG.Units.StatUpgrade.BeforeExitDelay)
                 closeStatFocus()
                 completed = completed + 1
-                -- Return the upgraded copy to inventory so M1 can take the next copy.
+
                 clearM1(slot.expectedName)
                 pause(CONFIG.Units.UISettleTime)
                 local nextEntry = readStableEntry(entry.slot)
@@ -5717,7 +6906,6 @@ do
     }
 end
 
-
 modules.upgradingUnit = {cleanup = cleanupStatFocus, run = function()
     local zoneId = getCycleZone()
     if cycleUnitUpgradeReadyZone ~= zoneId then
@@ -5735,9 +6923,9 @@ modules.upgradingUnit = {cleanup = cleanupStatFocus, run = function()
     checkPlot(plot)
     closeStatFocus()
     stageSpeedRequests, stageMiningRequests = 0, 0
-    local cache = {} -- Fresh for this stage attempt; confirmed purchases update its levels.
+    local cache = {}
     local damageResult = upgradeZoneDamage(plot, zoneId, densityLevel, cache)
-    pause(CONFIG.Units.StatUpgrade.PanelSettleTime) -- Include units that reached the threshold in the final Damage batch.
+    pause(CONFIG.Units.StatUpgrade.PanelSettleTime)
     local count, _, _, ready = upgradeDisplayedStats(plot, cache)
     return damageResult .. string.format(" Stats catch-up: %d displayed units at Damage level %d+; sent %d Speed and %d MineSpeed requests across all rounds; %s.",
         count, CONFIG.Units.StatUpgrade.MinimumDamageLevel, stageSpeedRequests, stageMiningRequests,
@@ -5745,12 +6933,9 @@ modules.upgradingUnit = {cleanup = cleanupStatFocus, run = function()
 end}
 end
 
-
--- Tutorial actions from test.luau; one worker shares the main Stop/unload lifecycle.
 do
 local CLICK_RANGE = 5
 local TELEPORT_OFFSET = Vector3.new(0, 2, 2)
-local plots = workspace:WaitForChild("MineWorld"):WaitForChild("Plots")
 local enabled = false
 local running = false
 local closed = false
@@ -5821,8 +7006,7 @@ local function mine()
     local nextClick = 0
 
     local function targetGone()
-        -- Check the selected path and instance. Keep a removal event latched
-        -- even if the game restores/replaces the node before the next frame.
+
         return target and (targetRemoved or nodes:FindFirstChild(targetName) ~= target
             or target.Parent ~= nodes or plot:FindFirstChild("Nodes") ~= nodes
             or not target:IsDescendantOf(workspace))
@@ -5834,6 +7018,7 @@ local function mine()
     end
 
     local ok, reason = pcall(function()
+        local plots = path(workspace, {"MineWorld", "Plots"})
         while enabled and not closed do
             checkAlive()
             if targetGone() then finish(); break end
@@ -5896,17 +7081,19 @@ local function mine()
                         if onScreen then
                             setEnabled(true, "Mining: " .. targetName)
                             ignoreUiUntil = os.clock() + 0.1
-                            local input = game:GetService("VirtualInputManager")
-                            local x, y = math.round(point.X), math.round(point.Y)
-                            input:SendMouseButtonEvent(x, y, 0, true, game, 0)
-                            input:SendMouseButtonEvent(x, y, 0, false, game, 0)
+
+                            local detector = target:FindFirstChild("NodeClick", true)
+                            assert(detector and detector:IsA("ClickDetector"), "Selected node has no NodeClick ClickDetector")
+                            checkAlive()
+                            VIM:SendMouseMoveEvent(point.X, point.Y, game)
+                            VIM:SendMouseButtonEvent(point.X, point.Y, 0, true, game, 0)
+                            VIM:SendMouseButtonEvent(point.X, point.Y, 0, false, game, 0)
                             nextClick = os.clock() + 0.15
                         end
                     end
                 end
             end
 
-            -- Existence is checked every frame, even between mining clicks.
             if targetGone() then finish(); break end
             task.wait()
         end
@@ -5920,23 +7107,22 @@ local function mine()
     end
 end
 
-local ACTION_TIMEOUT = 12
--- Seconds around game UI transitions; Stop remains responsive during delays.
+local ACTION_TIMEOUT = math.huge
+
 local UI_TIMING = {
     BeforeOpen = 0.25,
     AfterOpen = 0.75,
     BeforeClose = 0.25,
     AfterClose = 0.75,
     AfterTab = 0.35,
-    ChestMinimumHold = 2.0, -- Hold E at least this long when opening the tutorial chest.
-    ChestHoldPadding = 0.5, -- Extra time after the minimum or prompt HoldDuration.
+    ChestMinimumHold = 2.0,
+    ChestHoldPadding = 0.5,
 }
 local flowActive = false
 local pendingConfirmation = false
 local confirmed = false
 local heldKey
 local heldPrompt
-local playerGui = player:WaitForChild("PlayerGui")
 local VIM = game:GetService("VirtualInputManager")
 local UIS = game:GetService("UserInputService")
 
@@ -5955,16 +7141,24 @@ local function pause(seconds)
     repeat checkFlow(); task.wait(0.05) until os.clock() >= deadline
     checkFlow()
 end
-local function waitFor(label, predicate, timeout)
+local function waitFor(label, predicate, _timeout, retryAction)
     flowStatus.Text = label
-    local deadline = os.clock() + (timeout or ACTION_TIMEOUT)
-    repeat
+    local reportRetry = newRetryMonitor("Tutorial: " .. label)
+    local nextRetry = os.clock() + CONFIG.General.RetryInterval
+    local problem
+    while true do
         checkFlow()
         local value = predicate()
-        if value then return value end
+        if value then reportRetry(nil, true); return value end
+        if retryAction and os.clock() >= nextRetry then
+            local ok, response = pcall(retryAction)
+            checkFlow()
+            problem = not ok and response or nil
+            nextRetry = os.clock() + CONFIG.General.RetryInterval
+        end
+        reportRetry(problem)
         task.wait(0.05)
-    until os.clock() >= deadline
-    error("Timed out: " .. label, 0)
+    end
 end
 local function path(root, names)
     local current = root
@@ -6048,7 +7242,7 @@ local function rootPart()
     assert(root and humanoid and humanoid.Health > 0, "Character is not ready")
     return root
 end
-local function teleport(target)
+local function teleport(target, chest)
     checkFlow()
     assert(target, "Teleport target is missing")
     local cf, size
@@ -6059,15 +7253,24 @@ local function teleport(target)
         assert(part, "Teleport target has no BasePart")
         cf, size = part.CFrame, part.Size
     end
-    -- Top of the rotated bounds plus clearance for the character's feet.
+
     local halfHeight = (math.abs(cf.RightVector.Y) * size.X
         + math.abs(cf.UpVector.Y) * size.Y + math.abs(cf.LookVector.Y) * size.Z) / 2
     local destination = cf.Position + Vector3.new(0, halfHeight + 3.5, 0)
     local root = rootPart()
+    if chest then
+        destination = chestTopPosition(chest, target, player.Character, root)
+        cf = CFrame.new(destination)
+    end
     root.CFrame = CFrame.new(destination) * cf.Rotation
     root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
     waitFor("Confirming teleport", function()
         return root == rootPart() and (root.Position - destination).Magnitude < 3
+    end, nil, function()
+        local currentRoot = rootPart()
+        currentRoot.CFrame = CFrame.new(destination) * cf.Rotation
+        currentRoot.AssemblyLinearVelocity, currentRoot.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+        root = currentRoot
     end)
     pause(0.35)
 end
@@ -6102,20 +7305,16 @@ local function pressE(prompt, minimumHold, holdPadding)
     pause(math.max(prompt.HoldDuration, minimumHold or 0) + (holdPadding or 0.15))
     releaseInputs()
 end
--- Unknown UI state never silently passes: allow an explicit in-game confirmation.
--- This is used only when the game's supplied paths expose no reliable receipt.
+
 local function confirmResult(label, predicate)
     flowStatus.Text = label
-    local deadline = os.clock() + ACTION_TIMEOUT
-    while predicate and os.clock() < deadline do
-        checkFlow()
-        if predicate() then return end
-        task.wait(0.05)
-    end
+    if predicate then return waitFor(label, predicate) end
     confirmed, pendingConfirmation = false, true
     confirmButton.Visible = true
     flowStatus.Text = label .. " — verify in game, then Confirm & continue (or Stop)."
-    while not confirmed do checkFlow(); task.wait(0.05) end
+    local reportRetry = newRetryMonitor("Tutorial: waiting for manual confirmation: " .. label)
+    while not confirmed do checkFlow(); reportRetry(); task.wait(0.05) end
+    reportRetry(nil, true)
     pendingConfirmation = false
     confirmButton.Visible = false
 end
@@ -6146,8 +7345,7 @@ local function readFirstHotbarUnit()
     return {name = name, count = count}
 end
 local function selectHotbarUnit(slot)
-    -- Match main.luau's placeIntoM1: reset equipment, validate the source,
-    -- hold the hotbar number key for 0.05s, then allow 0.3s to equip.
+
     assert(not UIS:GetFocusedTextBox(), "Leave the text field before selecting hotbar 1")
     checkFlow()
     local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
@@ -6170,8 +7368,7 @@ actions[0] = function()
     assert(type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function",
         "Stage 0 needs isfile/readfile/writefile to save completion")
     local http = game:GetService("HttpService")
-    -- Executor workspace file, separate for each Roblox account. This file is
-    -- created by Stage 0 at runtime, never pre-marked complete by the installer.
+
     local filename = "MineStageBrowser_Stage0_" .. tostring(player.UserId) .. ".json"
     local settingNames = {"CutsceneMythical", "CutsceneExotic", "CutsceneSummons", "CutsceneMutations", "NightMode"}
     local state = {version = 1, userId = player.UserId, done = false, sent = {}}
@@ -6198,8 +7395,7 @@ actions[0] = function()
         flowStatus.Text = "Stage 0 already completed (saved); skipping"
         return
     end
-    -- Verify saving works before sending any toggle. Partial progress is saved
-    -- after each request so Stop/relaunch resumes without reversing prior ones.
+
     save()
     local event = waitFor("Stage 0: waiting for Remotes.GamestateEvent", function()
         return path(game:GetService("ReplicatedStorage"), {"Remotes", "GamestateEvent"})
@@ -6240,6 +7436,7 @@ local function tutorialChestCloseTarget()
     return found
 end
 local function useTutorialChest(takeLoot)
+    local reportRetry = newRetryMonitor("Tutorial chest recovery")
     local retryPrompt, lootRequested = false, false
     while true do
         checkFlow()
@@ -6249,18 +7446,24 @@ local function useTutorialChest(takeLoot)
                 return path(plot, {"Chest", "ChestBase"})
             end)
             validatePlot(plot)
-            teleport(base)
+            teleport(base, base.Parent)
             if retryPrompt or not visible(ui("ChestFrame")) then
                 pause(UI_TIMING.BeforeOpen)
                 local prompt = promptUnder(plot:FindFirstChild("Chest"))
                 validatePlot(plot)
                 checkFlow()
-                -- Simulate the prompt directly, as the normal shop/holder flows do.
+
                 heldPrompt = prompt
                 prompt:InputHoldBegin()
                 pause(math.max(prompt.HoldDuration, UI_TIMING.ChestMinimumHold) + UI_TIMING.ChestHoldPadding)
                 releaseInputs()
-                waitFor("Confirming tutorial chest opened", function() return visible(ui("ChestFrame")) end)
+                waitFor("Confirming tutorial chest opened", function() return visible(ui("ChestFrame")) end, nil, function()
+                    validatePlot(plot)
+                    heldPrompt = prompt
+                    prompt:InputHoldBegin()
+                    pause(math.max(prompt.HoldDuration, UI_TIMING.ChestMinimumHold) + UI_TIMING.ChestHoldPadding)
+                    releaseInputs()
+                end)
             end
             pause(UI_TIMING.AfterOpen)
             if takeLoot and not lootRequested then
@@ -6268,23 +7471,24 @@ local function useTutorialChest(takeLoot)
                 checkFlow()
                 flowStatus.Text = "Taking tutorial chest contents..."
                 getGameEvent():FireServer("MineTakeChest")
-                lootRequested = true -- A close error must not repeat a successful collection request.
+                lootRequested = true
                 pause(CONFIG.Sell.ChestDelay)
             end
             if visible(ui("ChestFrame")) then
                 local close = waitFor("Waiting for tutorial chest close button", tutorialChestCloseTarget)
                 pause(UI_TIMING.BeforeClose)
                 click(close)
-                waitFor("Confirming tutorial chest closed", function() return not visible(ui("ChestFrame")) end)
+                waitFor("Confirming tutorial chest closed", function() return not visible(ui("ChestFrame")) end, nil, function() click(close) end)
             end
             pause(UI_TIMING.AfterClose)
         end)
-        checkFlow() -- Stop/unload must leave the retry loop immediately.
-        if ok then return end
+        checkFlow()
+        if ok then reportRetry(nil, true); return end
         releaseInputs()
         retryPrompt = true
+        reportRetry(message)
         flowStatus.Text = "Chest error; retrying its proximity prompt: " .. tostring(message)
-        warn("[MineStageBrowser] Tutorial chest retry:", message)
+        consoleWarn("[MineStageBrowser] Tutorial chest retry:", message)
         pause(0.5)
     end
 end
@@ -6314,8 +7518,7 @@ actions[3] = function()
     assert(not occupied(), "M1 is already occupied; placement stopped to avoid picking it up")
     if visible(ui("SlotFocusFrame")) then
         pause(UI_TIMING.BeforeClose)
-        click(ui("SlotFocusFrame", "ExitButton"))
-        waitFor("Closing unit panel before placement", function() return not visible(ui("SlotFocusFrame")) end)
+        closeUnitPanel("Tutorial: closing unit panel before placement", checkFlow)
         pause(UI_TIMING.AfterClose)
     end
     local slot = waitFor("Waiting for hotbar slot 1", function()
@@ -6330,17 +7533,22 @@ actions[3] = function()
         return os.clock() - stableSince >= 0.2 and current
     end)
     assert(source.name ~= "" and source.count > 0, "Hotbar slot 1 has no unit")
-    for attempt = 1, 4 do
+    local attempt = 0
+    local reportRetry = newRetryMonitor("Tutorial M1 placement")
+    while true do
+        checkFlow()
+        attempt = attempt + 1
         if occupied() then
             assert(attempt > 1, "M1 became occupied before placement")
             waitFor("Confirming hotbar 1 supplied the placed unit", function() return consumed(source) end)
+            reportRetry(nil, true)
             return
         end
         local current = readFirstHotbarUnit()
         assert(current.name == source.name and current.count == source.count,
             "Hotbar slot 1 changed before placement")
-        -- Preserve the requested order on each attempt: select -> teleport -> place.
-        flowStatus.Text = "Selecting hotbar 1; placement attempt " .. attempt .. "/4"
+
+        flowStatus.Text = "Selecting hotbar 1; placement attempt " .. attempt
         slot = ui("HotbarFrame", "Content", "Container", "1")
         selectHotbarUnit(slot)
         validatePlot(plot)
@@ -6350,52 +7558,71 @@ actions[3] = function()
         root.CFrame = CFrame.new(base.Position + Vector3.new(0, 3, 0), base.Position)
         root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
         pause(0.35)
-        local deadline = os.clock() + ACTION_TIMEOUT
+        waitFor("Waiting for tutorial M1 placement prompt", function()
+            return occupied() or prompt().Enabled
+        end, nil, function() selectHotbarUnit(slot) end)
         local currentPrompt = prompt()
-        while not occupied() and not currentPrompt.Enabled and os.clock() < deadline do
-            pause(0.05)
-            currentPrompt = prompt()
-        end
         if not occupied() and currentPrompt.Enabled then
             current = readFirstHotbarUnit()
             assert(current.name == source.name and current.count == source.count,
                 "Hotbar slot 1 changed while equipping")
             assert(not action():match("^unlock") and not action():match("^locked"), "M1 is locked")
-            -- main.luau activates HolderPrompt directly instead of sending E.
-            -- Pair Begin/End and release on Stop/error/unload as well.
+
             flowStatus.Text = "Activating M1 HolderPrompt"
             heldPrompt = currentPrompt
             currentPrompt:InputHoldBegin()
             pause(math.max(currentPrompt.HoldDuration, 0.05))
             releaseInputs()
             pause(0.6)
-            deadline = os.clock() + ACTION_TIMEOUT
-            while not occupied() and os.clock() < deadline do pause(0.05) end
         end
         if occupied() then
             waitFor("Confirming hotbar 1 supplied the placed unit", function() return consumed(source) end)
+            reportRetry(nil, true)
             return
         end
-        if attempt < 4 then pause(0.35) end
+        reportRetry("HolderPrompt.ActionText=" .. prompt().ActionText)
+        pause(0.35)
     end
-    error("M1 placement failed after 4 attempts; HolderPrompt.ActionText=" .. prompt().ActionText, 0)
 end
 actions[1] = function()
     setEnabled(true)
-    mine() -- Stage 1 stops only when its exact target is removed/replaced.
+    mine()
     checkFlow()
     assert(statusLabel.Text:match("^Done:"), "Mining stage ended without confirming a removed node")
 end
 local function teleportButtonTo(destination)
-    local root = rootPart()
-    local before = root.Position
-    pause(UI_TIMING.BeforeClose)
-    click(ui("TeleportButton"))
-    waitFor("Confirming teleport to " .. destination, function()
-        return (rootPart().Position - before).Magnitude > 10
-    end)
+    local reportRetry = newRetryMonitor("Tutorial TeleportButton to " .. destination)
+    while true do
+        checkFlow()
+        pause(UI_TIMING.BeforeClose)
+        local root = rootPart()
+        local before = root.Position
+        local clicked, message = pcall(function() click(ui("TeleportButton")) end)
+        checkFlow()
+        local moved = false
+        if clicked then
+            -- Observe this click before choosing recovery; this never limits total retries.
+            local settleUntil = os.clock() + math.max(CONFIG.General.StartupTeleportClickInterval, SETTLE_TIME)
+            repeat
+                checkFlow()
+                if rootPart() == root and (root.Position - before).Magnitude > CONFIG.General.StartupTeleportMinDistance then
+                    moved = true
+                    break
+                end
+                pause(CONFIG.General.WaitPoll)
+            until os.clock() >= settleUntil
+        end
+        if moved then break end
+        reportRetry(clicked and "TeleportButton did not change your character position." or tostring(message))
+        local recovered, recoveryMessage = pcall(recoverUnitPanelThroughChest, checkFlow, "Tutorial TeleportButton recovery")
+        checkFlow()
+        if not recovered then reportRetry("Chest recovery: " .. tostring(recoveryMessage)) end
+        -- The next actual click gets a fresh baseline after chest recovery has finished.
+        pause(CONFIG.General.WaitPoll)
+    end
+    reportRetry(nil, true)
     pause(UI_TIMING.AfterClose)
-    -- Position checks distinguish the requested destination from any movement.
+
     local anchor
     if destination == "Base" then anchor = path(ownedPlot(), {"Chest", "ChestBase"})
     else anchor = workspace:FindFirstChild("SellStand") end
@@ -6403,17 +7630,17 @@ local function teleportButtonTo(destination)
     assert(target and (rootPart().Position - target.Position).Magnitude < 250,
         "TeleportButton did not reach " .. destination .. "; check starting location")
 end
-actions[4] = actions[1] -- Fresh mining run with the same chosen-node conditions.
+actions[4] = actions[1]
 actions[5] = function()
     teleportButtonTo("Shops")
     local stand = waitFor("Waiting for SellStand", function() return workspace:FindFirstChild("SellStand") end)
-    -- Approach the prompt part rather than the bounds of a large stand model.
+
     local prompt = promptUnder(stand)
     local anchor = prompt.Parent:IsA("Attachment") and prompt.Parent.Parent or prompt.Parent
     teleport(anchor)
     pause(UI_TIMING.BeforeOpen)
     pressE(prompt)
-    waitFor("Confirming sell UI opened", function() return visible(ui("SellFrame")) end)
+    waitFor("Confirming sell UI opened", function() return visible(ui("SellFrame")) end, nil, function() pressE(prompt) end)
     pause(UI_TIMING.AfterOpen)
     local card = waitFor("Finding Card with LayoutOrder 1", function()
         local scroll = ui("SellFrame", "Content", "Scroll")
@@ -6426,9 +7653,7 @@ actions[5] = function()
         end
         return found
     end)
-    -- The game does not guarantee a Selected attribute/checkmark on its Cards.
-    -- Match main.luau's selection settle, then click Sell once. Confirm the
-    -- actual sale below rather than blocking on a guessed selection marker.
+
     flowStatus.Text = "Selecting sell Card with LayoutOrder 1"
     click(card)
     pause(0.6)
@@ -6463,12 +7688,12 @@ actions[6] = function()
     pause(UI_TIMING.BeforeOpen)
     checkFlow()
     fireclickdetector(detector)
-    waitFor("Confirming unit UI opened", function() return visible(ui("SlotFocusFrame")) end)
+    waitFor("Confirming unit UI opened", function() return visible(ui("SlotFocusFrame")) end, nil, function() fireclickdetector(detector) end)
     pause(UI_TIMING.AfterOpen)
     click(ui("SlotFocusFrame", "Tabs", "StatsTab"))
     waitFor("Confirming Stats opened", function()
         return visible(ui("SlotFocusFrame", "BottomPanels", "StatsPanel"))
-    end)
+    end, nil, function() click(ui("SlotFocusFrame", "Tabs", "StatsTab")) end)
     pause(UI_TIMING.AfterTab)
     local function level()
         local label = ui("SlotFocusFrame", "BottomPanels", "StatsPanel", "Scroll", "Damage", "LevelTitle")
@@ -6477,10 +7702,9 @@ actions[6] = function()
     local before = level()
     assert(before, "Cannot read Damage.LevelTitle; no upgrade sent")
     click(ui("SlotFocusFrame", "BottomPanels", "StatsPanel", "Scroll", "Damage", "UpgradeButton"))
-    waitFor("Confirming Damage level increased", function() return level() and level() > before end)
+    waitFor("Confirming Damage level increased", function() return level() and level() > before end, nil, function() click(ui("SlotFocusFrame", "BottomPanels", "StatsPanel", "Scroll", "Damage", "UpgradeButton")) end)
     pause(UI_TIMING.BeforeClose)
-    click(ui("SlotFocusFrame", "ExitButton"))
-    waitFor("Confirming unit UI closed", function() return not visible(ui("SlotFocusFrame")) end)
+    closeUnitPanel("Tutorial: closing unit panel after upgrades", checkFlow)
     pause(UI_TIMING.AfterClose)
 end
 actions[7] = function()
@@ -6488,8 +7712,7 @@ actions[7] = function()
         return ui("SkillTreeFullFrame", "Tree", "Canvas", "Zone_Z1", "Node_Deposits1")
     end
     local function readPips()
-        -- Reacquire the exact node on every read because a purchase can rebuild
-        -- the tree. Never use another node's Pips as purchase confirmation.
+
         local label = path(depositNode(), {"Content", "Pips"})
         if not label then return nil end
         local text = label.Text:gsub("<[^>]*>", "")
@@ -6503,16 +7726,16 @@ actions[7] = function()
     local function exitSkillTree()
         pause(UI_TIMING.BeforeClose)
         click(ui("SkillTreeFullFrame", "Footer", "Close"))
-        waitFor("Confirming skill tree closed", function() return not visible(ui("SkillTreeFullFrame")) end)
+        waitFor("Confirming skill tree closed", function() return not visible(ui("SkillTreeFullFrame")) end, nil, function() click(ui("SkillTreeFullFrame", "Footer", "Close")) end)
         pause(UI_TIMING.AfterClose)
     end
     local function refreshUpgradesThroughChest()
         useTutorialChest(false)
     end
     local needsChestRefresh = false
-    -- Retain the first request's receipt across UI reloads. Recovery must not
-    -- submit additional purchases while waiting for the same Pips increase.
+
     local pendingPurchase
+    local reportRetry = newRetryMonitor("Tutorial Stage 7 recovery")
     while true do
         checkFlow()
         local ok, result = pcall(function()
@@ -6529,7 +7752,7 @@ actions[7] = function()
                 end
                 pause(UI_TIMING.BeforeOpen)
                 click(upgrades)
-                waitFor("Confirming skill tree opened", function() return visible(ui("SkillTreeFullFrame")) end)
+                waitFor("Confirming skill tree opened", function() return visible(ui("SkillTreeFullFrame")) end, nil, function() click(ui("LeftBar", "Content", "Container", "UpgradesButton")) end)
                 pause(UI_TIMING.AfterOpen)
             end
             local before = waitFor("Reading Z1 Node_Deposits1.Content.Pips", readPips)
@@ -6539,7 +7762,7 @@ actions[7] = function()
                 return true
             end
             if not pendingPurchase then
-                -- Same request and arguments as main.luau.
+
                 local event = waitFor("Waiting for Remotes.GamestateEvent", function()
                     return path(game:GetService("ReplicatedStorage"), {"Remotes", "GamestateEvent"})
                 end)
@@ -6555,17 +7778,23 @@ actions[7] = function()
                 .. pendingPurchase.current .. "/" .. pendingPurchase.maximum, function()
                 local after = readPips()
                 return after and after.maximum == pendingPurchase.maximum and after.current > pendingPurchase.current
+            end, nil, function()
+                local current = readPips()
+                if current and current.maximum == pendingPurchase.maximum and current.current == pendingPurchase.current then
+                    getGameEvent():FireServer("MineBuySkill", "Z1", "NodeCount", "Deposits1")
+                end
             end)
             exitSkillTree()
             return true
         end)
         checkFlow()
-        if ok and result then return end
+        if ok and result then reportRetry(nil, true); return end
+        reportRetry(not ok and result or "Waiting for Stage 7 to complete.")
         if not ok then
             releaseInputs()
             needsChestRefresh = true
             flowStatus.Text = "Stage 7 will retry: " .. tostring(result)
-            warn("[MineStageBrowser] Stage 7 recovery:", result)
+            consoleWarn("[MineStageBrowser] Stage 7 recovery:", result)
         end
         pause(0.5)
     end
@@ -6598,7 +7827,6 @@ modules.tutorial = {
 }
 end
 
--- One controller owns all actions. Switching tabs never starts/stops a worker.
 local function runPage(id)
     return id == "hotbarUpgrade" and modules.hotbarUpgrade.page or pages[id]
 end
@@ -6616,7 +7844,7 @@ local function setControls(running)
     pages.tutorial.run.AutoButtonColor = not running or tutorialRunning
     pages.tutorial.run.Text = tutorialRunning and "Stop tutorial" or pages.tutorial.runText
     if tutorialRunning then pages.tutorial.run.BackgroundColor3 = Color3.fromRGB(165, 67, 79) end
-    -- Master remains clickable while its worker runs: the same button turns it OFF.
+
     local masterRunning = running and activeRun == "master"
     pages.master.run.Active = not running or masterRunning
     pages.master.run.AutoButtonColor = not running or masterRunning
@@ -6634,9 +7862,12 @@ local function setControls(running)
 end
 
 local function resetRun()
+    table.clear(scriptErrors.retries)
+    if modules.idleClick then modules.idleClick.stop() end
     runScope.current = nil
     modules.masterMovement.stop()
     releaseInputs()
+    if modules.pickaxe and modules.pickaxe.cleanupWaiting then pcall(modules.pickaxe.cleanupWaiting) end
     if modules.tutorial then modules.tutorial.cleanup() end
     if modules.mutation and modules.mutation.cleanup then pcall(modules.mutation.cleanup) end
     local unitUpgrade = rawget(modules, "upgradingUnit")
@@ -6645,7 +7876,7 @@ local function resetRun()
     busy, activeRun, activeStage = false, nil, nil
     cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil
     worker = nil
-    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleUpgradesComplete, cycleBestEquipped = nil, nil, nil, false, false
+    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady, cycleBestEquipped = nil, nil, nil, false, false
     if alive then
         setControls(false)
         refreshUnitCooldown()
@@ -6701,12 +7932,12 @@ end
 modules.cycleEnd = {run = function()
     checkAlive()
     checkPlot(getMyPlot())
-    requestCycleBestEquip() -- Always keep the separate cycle-end request, even after an early Equip Best.
-    modules.upgrades.selectZones() -- Uses only this cycle's cache; never opens the panel.
+    requestCycleBestEquip()
+    modules.upgrades.selectZones()
     unlockCycleHolders(getMyPlot())
 end}
 
-local function runStage(id, checkTutorialOnly)
+local function runStage(id, cacheZoneOnly)
     checkAlive()
     activeStage = id
     local page = runPage(id)
@@ -6719,15 +7950,16 @@ local function runStage(id, checkTutorialOnly)
         pages.master.status.Text = page.name .. ": preparing..."
     end
     local result
-    if checkTutorialOnly then
-        assert(id == "upgrades", "Tutorial visibility checks belong to the Upgrades step.")
-        result = modules.upgrades.checkTutorialVisibility()
+    if cacheZoneOnly then
+        assert(id == "upgrades", "Zone/Density scans belong to the Upgrades step.")
+        result = modules.upgrades.cacheCurrentZone()
     else
         result = modules[id].run()
     end
     checkAlive()
     releaseInputs()
     restorePosition()
+    scriptErrors.clearStage(id)
     page.status.Text = tostring(result or "Finished.")
     page.status.TextColor3 = colors.success
     if id == "hotbarUpgrade" or id == "tutorial" then logInfo(page.name, page.status.Text)
@@ -6736,7 +7968,7 @@ local function runStage(id, checkTutorialOnly)
         local enabled = preferences.stages[id]
         stageRows[id].Text = page.name .. (enabled and "  /  Done" or "  /  OFF")
         stageRows[id].TextColor3 = enabled and colors.success or colors.muted
-        -- These game panels can obstruct prompts in the following stages.
+
         if id == "sell" then closeGamePanel("SellFrame") end
         if id ~= "cycleEnd" then pause(CONFIG.Flow.StageDelay) end
     end
@@ -6744,6 +7976,17 @@ local function runStage(id, checkTutorialOnly)
 end
 
 startRun = function(id)
+    if alive and not modules.gameReady.isReady() then
+        if id == "master" then
+            preferences.masterEnabled = not preferences.masterEnabled
+            if preferences.masterEnabled then modules.workspaceCleanup.onMasterEnabled() end
+            savePreferences()
+            pages.master.run.Text = preferences.masterEnabled and "Master: ON - Waiting for game" or pages.master.runText
+            minimizedMaster.Text = preferences.masterEnabled and "Master: Waiting" or "Master: OFF"
+        end
+        runPage(id).status.Text = "Waiting for offline collection and TeleportButton to change your character position."
+        return
+    end
     if not alive or busy or os.clock() - lastRun < CONFIG.General.ButtonDebounce then
         if alive and (id == "upgradingUnit" or id == "upgradingOldUnit" or id == "master") then
             logUnitUpgradeDetail(string.format("Start ignored for %s: busy=%s; active run=%s; active stage=%s; debounce remaining=%.2fs",
@@ -6753,19 +7996,20 @@ startRun = function(id)
         return
     end
     if id == "tutorial" and (preferences.tutorialHidden or minimizedActions.openBusy) then return end
-    -- Save pending pickaxe edits before locking controls, also from Master.
+
     if (id == "pickaxe" or (id == "master" and preferences.stages.pickaxe)) and not modules.pickaxe.prepare() then
         pages.master.status.Text = "Check the Pickaxe tab: its limit could not be saved."
         pages.master.status.TextColor3 = colors.error
         selectTab("pickaxe")
         return
     end
-    if not alive or busy then return end -- Preparation may have yielded.
+    if not alive or busy then return end
+    scriptErrors.clearAll()
     local token = {id = id}
     runScope.current = token
     busy, activeRun, activeStage = true, id, nil
     cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil
-    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleUpgradesComplete, cycleBestEquipped = nil, nil, nil, false, false
+    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady, cycleBestEquipped = nil, nil, nil, false, false
     lastRun = os.clock()
     local page = runPage(id)
     page.status.TextColor3 = colors.muted
@@ -6773,16 +8017,17 @@ startRun = function(id)
     if id == "master" then
         minimizedActions.setRollEnabled(false)
         preferences.masterEnabled = true
+        modules.workspaceCleanup.onMasterEnabled()
         resetStageRows()
     end
     if not actionIsCurrent(token) then return end
     setControls(true)
     if id == "master" or id == "hotbarUpgrade" then
-        -- Apply in this button handler, before saving preferences or deferring any stage work.
+
         local movementOK, movementError = pcall(modules.masterMovement.start, token)
         if not movementOK then
             if id == "master" then preferences.masterEnabled = false end
-            resetRun() -- Also destroys any partially created movement constraints.
+            resetRun()
             page.status.Text = "Could not enable noclip/flight: " .. tostring(movementError)
             page.status.TextColor3 = colors.error
             footer.Text = "Stopped: noclip/flight could not start."
@@ -6792,7 +8037,7 @@ startRun = function(id)
         end
     end
     if id == "master" then savePreferences() end
-    if not actionIsCurrent(token) then return end -- OFF during a preference write must not revive this run.
+    if not actionIsCurrent(token) then return end
     worker = task.defer(function()
         runScope.threads[coroutine.running()] = token
         if not actionIsCurrent(token) then return end
@@ -6803,21 +8048,24 @@ startRun = function(id)
                     checkAlive()
                     cycle = cycle + 1
                     refreshUnitCooldown()
-                    cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil -- Fresh preparation/sequence permission each cycle.
-                    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleUpgradesComplete, cycleBestEquipped = nil, nil, nil, false, false -- Refresh zone at each cycle boundary.
+                    cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil
+                    cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady, cycleBestEquipped = nil, nil, nil, false, false
                     resetStageRows()
                     local cycleOK, cycleError = pcall(function()
+                        if cycle == 1 then
+                            modules.workspaceCleanup.onCycleStart(cycle)
+                            modules.dailyRewards.start()
+                        end
                         for _, stage in ipairs(order) do
-                            if stage ~= "cycleEnd" then
-                                if preferences.stages[stage] then
-                                    runStage(stage)
-                                elseif stage == "upgrades" and not preferences.tutorialHidden then
-                                    runStage(stage, true)
-                                end
+                            -- Always visit Upgrades; OFF still opens the UI and scans fresh values.
+                            if stage == "upgrades" then
+                                runStage(stage, not preferences.stages.upgrades)
+                            elseif stage ~= "cycleEnd" and preferences.stages[stage] then
+                                runStage(stage)
                             end
                         end
                     end)
-                    checkAlive() -- A stopped run must not enter recovery or cycle-end actions.
+                    checkAlive()
                     releaseInputs()
                     if modules.mutation.cleanup then pcall(modules.mutation.cleanup) end
                     if modules.upgradingUnit.cleanup then pcall(modules.upgradingUnit.cleanup) end
@@ -6831,7 +8079,7 @@ startRun = function(id)
                             stageRows[failed].Text = pages[failed].name .. "  /  Error - retry next cycle"
                             stageRows[failed].TextColor3 = colors.error
                         end
-                        -- Failed panels must not obstruct the next cycle's prompts.
+
                         closeGamePanel("SellFrame")
                         closeGamePanel("SkillTreeFullFrame")
                         closeGamePanel("InventoryFrame")
@@ -6851,16 +8099,16 @@ startRun = function(id)
                         or string.format("Cycle %d had an error. Master ON; retrying in %g seconds.", cycle, CONFIG.Flow.CycleDelay)
                     pages.master.status.TextColor3 = (cycleOK and equipOK) and colors.success or colors.error
                     footer.Text = string.format("Master ON | Cycle %d | Next cycle in %g seconds", cycle, CONFIG.Flow.CycleDelay)
-                    pause(CONFIG.Flow.CycleDelay)
+                    modules.pickaxe.waitBetweenCycles(CONFIG.Flow.CycleDelay)
                 end
                 return "Master OFF."
             end
             local result = runStage(id)
-            -- Preserve standalone Upgrades selection, after its one stage finishes.
+
             if id == "upgrades" then modules.upgrades.selectZones() end
             return result
         end)
-        if not actionIsCurrent(token) then return end -- Never reset a newer run from an old worker.
+        if not actionIsCurrent(token) then return end
         releaseInputs()
         if modules.upgradingUnit.cleanup then pcall(modules.upgradingUnit.cleanup) end
         restorePosition()
@@ -6887,12 +8135,13 @@ end
 
 stopRun = function()
     if not alive or not busy then return end
+    scriptErrors.clearAll()
     local stoppedRun, stoppedStage = activeRun, activeStage
     if stoppedRun == "master" then
         preferences.masterEnabled = false
     end
-    runScope.current = nil -- Invalidate before cancellation/cleanup, including failed cancellation.
-    modules.masterMovement.stop() -- Remove flight/collision changes immediately in the OFF handler.
+    runScope.current = nil
+    modules.masterMovement.stop()
     logInfo(stoppedStage and runPage(stoppedStage).name or "Master", "Stopped by user.")
     if worker then pcall(task.cancel, worker) end
     resetRun()
@@ -6919,7 +8168,7 @@ connect(stop.Activated, function() stopRun() end)
 setControls(false)
 refreshUnitCooldown()
 do
-    -- Prefer the executor UI layer above normal game UI, with safe fallbacks.
+
     local parents = {}
     if type(gethui) == "function" then
         local ok, hiddenGui = pcall(gethui)
@@ -6932,8 +8181,6 @@ do
         if pcall(function() gui.Parent = parent end) then break end
     end
 
-    -- Reinsert our window when a later UI ties the maximum DisplayOrder.
-    -- All listeners use the existing unload cleanup; other scripts are left untouched.
     local uiParent = gui.Parent
     local watched = setmetatable({}, {__mode = "k"})
     local function watch(other)
@@ -6953,6 +8200,8 @@ do
     for _, other in ipairs(uiParent:GetDescendants()) do watch(other) end
 end
 resize()
-modules.plotCleanup.start()
--- Start only after every module, callback, and control has been initialized.
-if preferences.masterEnabled then startRun("master") end
+modules.workspaceCleanup.refresh()
+if modules.gameReady.wait() then
+    modules.plotCleanup.start()
+    if preferences.masterEnabled and not busy then startRun("master") end
+end
