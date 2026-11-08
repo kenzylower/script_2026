@@ -65,7 +65,7 @@ local CONFIG = {
         StandHeight = 2,
     },
     Upgrades = {
-        DiscordWebhookUrl = "https://discord.com/api/webhooks/1568681244340920331/aRrPlNNswoFe-a5VzDDf4IcwCuqbjePGpbWs1zmlejxj_j8QBXn3Nu0DqHeIB6MuTiHH",
+        DiscordWebhookUrl = "https://discord.com/api/webhooks/1567300810436780103/SsMfBRMJrsL4o567CYVrThCgjJVIO6V5LX84h2pWpbphaJrQ7gCofJN9SSNK3OdxISft",
         SelectCurrentZone = true,
         SelectNextZone = true,
         RequestDelay = 0.35,
@@ -1405,9 +1405,9 @@ WHEN THE GATE PASSES
 Upgrade matching required units toward the zone MaxLevelCap. Confirm required units at cap before allowing Damage on cached extra displayed holders. Recheck the required lineup/quotas after core upgrades. Extras must still be displayed and cached. Their Damage target is half their own actual maximum from the Stats panel, rounded down; the zone MaxLevelCap does not limit extra Damage. The gate can fail when required count is zero; that does not grant unrestricted Damage upgrades.
 
 BATCHES / STAT CATCH-UP
-Choose the lowest Damage level first, then holder number, with up to the current zone's DamageBatchSize requests per batch (default 5). Require a green button and confirm each level/color response. On the full-cap path, use DamageBatchSize for Damage catch-up boundaries and pause until eligible Speed and MineSpeed reach current Damage levels or their own maxima.
+Choose the lowest Damage level first, then holder number, with up to the current zone's DamageBatchSize requests per batch (default 5). Require a green button and confirm each level/color response. On the full-cap path, catch up that same unit immediately after each Damage batch, before any further Damage upgrades on any unit. Refresh its Speed/Mining levels and maxima from the Stats panel and catch up to the lesser of its current Damage and each stat maximum. If catch-up is unavailable, pause further Damage.
 
-Cache identities and Damage/Speed/Mining levels once for this run. Include current-zone whitelisted units, units already at the configured stat minimum, and extras when a valid core exists. After Damage processing, catch up Speed and MineSpeed for cached displayed units at or above the minimum Damage level, regardless of their name. Balance the lowest stat levels in batches of up to five; cap each at the lesser of current Damage and that stat's maximum.
+Cache identities and initial Damage/Speed/Mining levels for this run. Refresh Speed/Mining readings for each unit during catch-up. Include current-zone whitelisted units, units already at the configured stat minimum, and extras when a valid core exists. After Damage processing, catch up Speed and MineSpeed for cached displayed units at or above the minimum Damage level, regardless of their name. Balance the lowest stat levels in batches of up to five; cap each at the lesser of current Damage and that stat's maximum.
 
 STOPS
 Unavailable upgrade buttons stop progress rather than sending requests. Unfinished stat catch-up pauses further Damage. Identity, plot, character, display, focus-target, unreadable-level, or invalid-response failures stop the stage. Close the focused unit panel on exit.]],
@@ -5467,8 +5467,7 @@ end, run = function()
     end
     report(slots, string.format("Starting mutations for %s on %s: first %d unlocked slots need Diamond or higher. Required tier counts: %s. Extra slots are excluded.",
         zoneId, plot.Name, needed, table.concat(tierGoals, ", ")))
-    local rolls, loggedFirstRequest = 0, false
-    local reportMutationRetries = newRetryMonitor("Meeting mutation quotas in " .. zoneId)
+    local rolls, lastRollingHolder = 0, nil
     local observedRanks = {}
     local function sendRoll(choice)
         checkPlot(plot)
@@ -5478,15 +5477,14 @@ end, run = function()
             error(scopeReason or "Refusing to mutate a holder outside the first required slots.", 0)
         end
         if not choice.holder:IsDescendantOf(plot) then error("Selected holder was removed. No roll sent.", 0) end
-        status.Text = string.format("Rolling %s (%s). Roll: %d", choice.holder.Name, choice.mutation, rolls + 1)
+        status.Text = "Rolling " .. choice.holder.Name
         checkAlive()
         getGameEvent():FireServer("MineRollMutation", choice.holder.Name)
-        if not loggedFirstRequest then
-            logInfo("Mutate Units", "MineRollMutation request sent for " .. choice.holder.Name .. ".")
-            loggedFirstRequest = true
+        if lastRollingHolder ~= choice.holder.Name then
+            logInfo("Mutate Units", "Rolling " .. choice.holder.Name)
+            lastRollingHolder = choice.holder.Name
         end
         rolls = rolls + 1
-        reportMutationRetries("Rolling " .. choice.holder.Name .. "; total rolls: " .. rolls)
     end
     while alive do
         checkPlot(plot)
@@ -5504,7 +5502,8 @@ end, run = function()
         recordMasterMutations(zoneId, slots)
         if requirementsMet(slots, rule, RequiredUnitCount) then
             local minimum = requiredMutationCount(rule, RequiredUnitCount)
-            report(slots, "The first RequiredUnitCount unlocked slots meet mutation quotas. Other slots were excluded.")
+            status.Text = zoneId .. ": mutation quota reached."
+            logInfo("Mutate Units", status.Text)
             return string.format("%s: mutation requirements met (%d Diamond-or-higher units required). Rolls: %d.", zoneId, minimum, rolls)
         end
         local neededNow = requiredMutationCount(rule, RequiredUnitCount)
@@ -5824,12 +5823,24 @@ local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, optio
     local settings = CONFIG.Units.StatUpgrade
     local damageRequests, session = 0, nil
     local minimum = options.balanceStats and minimumStatDamageLevel() or nil
-    local damageBatchTarget, statsReady = nil, true
+    local statsReady, caughtUpLevels = true, {}
     local cache = options.cache or (minimum and getUnitUpgradeCache(plot))
     if cache then session = cache.session end
     local function checkSlot(slot)
         local currentName = waitForDisplayedUnit(plot, holders, slot)
         slot.expectedName = slot.expectedName or currentName
+    end
+    local function catchUpSlot(slot)
+        if minimum and slot.level >= minimum and caughtUpLevels[slot.holder] ~= slot.level then
+            local _, _, _, ready = upgradeDisplayedStats(plot, cache, slot.holder)
+            statsReady = ready
+            if not ready then
+                stageText.Text = slot.holder.Name .. ": Damage paused until Speed/Mining catch up to its current Damage level."
+                return false
+            end
+            caughtUpLevels[slot.holder] = slot.level
+        end
+        return true
     end
     logUnitUpgradeDetail(heading .. ": " .. #slots .. " displayed units.")
     for _, slot in ipairs(slots) do
@@ -5850,40 +5861,26 @@ local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, optio
         slot.damageUnavailable = false
     end
     while alive do
-        local choice, lowestLevel
+        local choice
         for _, slot in ipairs(slots) do
             if not cache then checkSlot(slot) end
             slot.level = slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder)
             if slot.level >= slot.damageCap then slot.remaining = 0 end
-            -- Extras can have different caps. Finished low-cap units must not
-            -- hold the next Damage/catch-up batch below another extra's target.
-            if not options.halfDamageMaximum or (slot.remaining > 0 and not slot.damageUnavailable) then
-                lowestLevel = math.min(lowestLevel or slot.level, slot.level)
-            end
             if slot.remaining > 0 and not slot.damageUnavailable and (not choice or slot.level < choice.level
                 or (slot.level == choice.level and slot.number < choice.number)) then choice = slot end
         end
-        if minimum and ((lowestLevel and lowestLevel >= minimum) or (options.halfDamageMaximum and not choice))
-            and (not damageBatchTarget or not choice or lowestLevel >= damageBatchTarget) then
-            local _, _, _, ready = upgradeDisplayedStats(plot, cache)
-            statsReady = ready
-            if not ready then
-                stageText.Text = "Damage paused: eligible Speed/MineSpeed have not caught up to current Damage levels."
-                break
-            end
-            damageBatchTarget = (lowestLevel or minimum) + damageBatchSize
+        if not choice then
+            -- Already-maxed units still need catch-up before extras may receive Damage.
+            for _, slot in ipairs(slots) do if not catchUpSlot(slot) then break end end
+            break
         end
-        if not choice then break end
-
-        if minimum and choice.level >= minimum
-            and (not damageBatchTarget or choice.level >= damageBatchTarget) then break end
+        if not catchUpSlot(choice) then break end
         session = session or createUnitStatSession(plot, 1)
         session.open(choice)
         local batchSize = math.min(damageBatchSize, choice.remaining)
-        if minimum then
-            batchSize = math.min(batchSize, (damageBatchTarget or minimum) - choice.level)
+        if minimum and choice.level < minimum then
+            batchSize = math.min(batchSize, minimum - choice.level)
         end
-        local batchStartLevel = choice.level
         for _ = 1, batchSize do
             local before = choice.cachedStats and choice.cachedStats.Damage or session.readStat(choice, "Damage")
             choice.level = before.level
@@ -5918,15 +5915,10 @@ local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, optio
             if not after.upgradeable then choice.damageUnavailable = true; break end
         end
 
-        if cache and choice.level > batchStartLevel then
-            for _, stat in ipairs({"Speed", "MineSpeed"}) do
-                if choice.cachedStats[stat].maximum < choice.level then
-                    choice.cachedStats[stat] = session.readStat(choice, stat == "MineSpeed" and "Mining" or stat)
-                end
-            end
-        end
         pause(settings.BeforeExitDelay)
         closeStatFocus()
+        -- Finish this unit's Speed/Mining catch-up before any other Damage batch.
+        if not catchUpSlot(choice) then break end
     end
     if options.confirmCap and damageRequests > 0 then pause(settings.PanelSettleTime) end
     if not cache then
@@ -6073,20 +6065,31 @@ local function upgradeZoneDamage(plot, zoneId, densityLevel, cache)
         zoneId, densityLevel, #core, #extras, damageRequests, cap)
 end
 
-upgradeDisplayedStats = function(plot, cache)
+upgradeDisplayedStats = function(plot, cache, onlyHolder)
     closeStatFocus()
     local settings = CONFIG.Units.StatUpgrade
     local minimum = minimumStatDamageLevel()
     cache = getUnitUpgradeCache(plot, cache)
     local eligible = {}
     for _, entry in ipairs(cache.slots) do
-        if entry.cachedStats.Damage.level >= minimum then
+        if entry.cachedStats.Damage.level >= minimum and (not onlyHolder or entry.holder == onlyHolder) then
             table.insert(eligible, {holder = entry.holder, number = entry.number, expectedName = entry.expectedName,
                 cachedStats = entry.cachedStats, target = entry.cachedStats.Damage.level})
         end
     end
     if #eligible == 0 then return 0, 0, 0, true end
     local session = cache.session
+    if onlyHolder then
+        -- Damage can raise stat maxima; do not keep an old level-11 limit cached.
+        for _, slot in ipairs(eligible) do
+            session.open(slot)
+            for _, stat in ipairs({"Speed", "MineSpeed"}) do
+                slot.cachedStats[stat] = session.readStat(slot, stat == "MineSpeed" and "Mining" or stat)
+            end
+            pause(settings.BeforeExitDelay)
+            closeStatFocus()
+        end
+    end
     local function needsUpgrade(slot, state)
         return state.level < math.min(slot.target, state.maximum)
     end
