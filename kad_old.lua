@@ -72,7 +72,7 @@ local CONFIG = {
         StandHeight = 2,
     },
     Upgrades = {
-        DiscordWebhookUrl = "https://discord.com/api/webhooks/1567300810436780103/SsMfBRMJrsL4o567CYVrThCgjJVIO6V5LX84h2pWpbphaJrQ7gCofJN9SSNK3OdxISft",
+        DiscordWebhookUrl = "https://discord.com/api/webhooks/1568681244340920331/aRrPlNNswoFe-a5VzDDf4IcwCuqbjePGpbWs1zmlejxj_j8QBXn3Nu0DqHeIB6MuTiHH",
         SelectCurrentZone = true,
         SelectNextZone = true,
         RequestDelay = 0.35,
