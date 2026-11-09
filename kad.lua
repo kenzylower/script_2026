@@ -107,9 +107,6 @@ local CONFIG = {
             TeleportDelay = 0.35, KeyHold = 0.05, EquipDelay = 0.3, AfterPromptDelay = 0.6,
         },
     },
-    UpgradingOldUnit = {
-        TargetLevel = 70,
-    },
     Units = {
         SequenceCooldown = 5 * 60,
         UpgradeRequestDelays = {
@@ -1540,16 +1537,16 @@ Use the cached current zone and Density. Run only at Density 0. Z1 has no previo
 ACTIONS
 1. Check plot ownership and scan displayed numbered holders.
 2. Read each unit's displayed name. Include only exact matches in the previous zone's Names list; skip other or unreadable names.
-3. Upgrade Damage only, toward UpgradingOldUnit.TargetLevel. Work on the lowest Damage level first, breaking ties by holder number, in batches of up to five requests.
+3. Upgrade Damage only, toward each unit's own maximum Damage level read from its Stats panel. Work on the lowest Damage level first, breaking ties by holder number, in batches of up to five requests.
 4. Open the correct unit panel and require a green Damage button. Recheck unit identity/ownership and confirm a level or button-color response after each request. Close focus between batches.
 
 STOPS
 Skip if no displayed unit matches. Stop a unit at the target or when Damage is unavailable; stop with an error if ownership, identity, character, required controls, or expected response is lost. This stage does not run Speed/MineSpeed catch-up.]],
         units = [[ENTRY CONDITIONS
-Check the shared unit-sequence cooldown before refreshing anything. If active, keep displayed units and skip. Reset Cooldown clears it; a new zone resets it. Validate the equipment mode, use cached zone/Density, check plot ownership, and start the sequence cooldown.
+Run at Density 0 or higher. Check the shared unit-sequence cooldown before refreshing anything. If active, keep displayed units and skip. Reset Cooldown clears it; a new zone resets it. Validate the equipment mode, use cached zone/Density, check plot ownership, and start the sequence cooldown.
 
 AVAILABILITY CHECK
-Clear occupied hotbar assignments, open inventory, and count current-zone whitelisted copies directly from inventory, including stack quantities. At Density 2+, require a nonempty animation tag; Density 0-1 accepts either. Skip unreadable Damage values. Add matching displayed units to this inventory count; no inventory card is selected during the check. If insufficient, FinalEquipMode is Best, or Density is 0, keep displayed units and skip replacement/mutation preparation. Equip Best is handled at Cycle end.
+Clear occupied hotbar assignments, open inventory, and count current-zone whitelisted copies directly from inventory, including stack quantities. At Density 2+, require a nonempty animation tag; Density 0-1 accepts either. Skip unreadable Damage values. Add matching displayed units to this inventory count; no inventory card is selected during the check. If insufficient or FinalEquipMode is Best, keep displayed units and skip replacement/mutation preparation. Equip Best is handled at Cycle end.
 
 REPLACEMENT / PLACEMENT
 Once eligible, require a ready character, close panels, and remove all displayed units with confirmed pickup retries. Clear occupied hotbar assignments again, open inventory, and recheck available matching copies plus units already placed in required pads.
@@ -1559,7 +1556,7 @@ Rank eligible inventory stacks by highest Damage, prefer _AnimTag on equal Damag
 If selection confirmation fails, recheck for delayed success, reacquire the same card, and retry without clearing the selected stack or cycling inventory closed and open. Unreadable quantities, UI waits, pickup, and placement retry without timeouts and report periodic errors. Preserve character, plot, hotbar identity, focus/text-field, and held-input checks.
 
 MUTATION READINESS
-Confirm whitelisted units occupy every required pad and provide that displayed-unit count to later stages. Partial/failed preparation, cooldown skips, and Density 0 keep Mutate Units locked.]],
+Confirm whitelisted units occupy every required pad and provide that displayed-unit count to later stages. Partial/failed preparation and cooldown skips keep Mutate Units locked.]],
         mutation = [[ENTRY CONDITIONS
 Use the cached zone/Density. Skip at Density 2+, when all RequiredMutations tier counts are zero, or when full Required Units preparation/count confirmation did not complete this cycle.
 
@@ -1652,7 +1649,7 @@ Master attempts this stage after normal stages, including after a stage error, w
                 table.insert(settings, string.format("Per-node requests: unlimited while available. Request delay: %gs. Row tolerance: %g.",
                     CONFIG.Upgrades.RequestDelay, CONFIG.Upgrades.RowScaleTolerance))
             elseif id == "upgradingOldUnit" then
-                table.insert(settings, string.format("Old-unit Damage target: %d.", CONFIG.UpgradingOldUnit.TargetLevel))
+                table.insert(settings, "Old-unit Damage target: each unit's own maximum from its Stats panel.")
             elseif id == "units" then
                 table.insert(settings, string.format("Equipment mode: %s. Sequence cooldown: %gs. Removal/placement retries: unlimited.",
                     CONFIG.Units.FinalEquipMode, CONFIG.Units.SequenceCooldown))
@@ -3071,13 +3068,12 @@ local function syncUnitSequenceZone(zoneId)
     unitCountSnapshot, cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone = nil, nil, nil
     masterRequirementProgress[zoneId] = {}
     refreshMasterRequirements(zoneId)
-    lastStageSkip.units, lastStageSkip.mutation, lastStageSkip.upgradingUnit = nil, nil, nil
     refreshUnitCooldown()
     logInfo("Upgrades", previous .. " -> " .. zoneId .. ": unit sequence cooldown reset for the new zone.")
 end
 local function unitsPreparedThisCycle(zoneId)
     if cycleUnitsPreparedZone ~= zoneId then
-        return false, "Full Required Units preparation did not complete in this cycle (placement skipped / density 0 / cooldown)."
+        return false, "Full Required Units preparation did not complete in this cycle (placement skipped / cooldown)."
     end
     return true
 end
@@ -5228,7 +5224,6 @@ local function finishEquipping(event, plot, zoneId, densityLevel)
         return "Placement skipped: " .. reason .. " Equip Best is handled at cycle end.", false, reason
     end
     if FinalEquipMode == "Best" then return skipPlacement("FinalEquipMode is Best.") end
-    if densityLevel == 0 then return skipPlacement("density level is 0.") end
     if required == 0 then return skipPlacement("RequiredUnitCount is zero; no required pads to fill.") end
     local placed, batches = 0, 0
     local function finish(displayed, detail)
@@ -5353,8 +5348,8 @@ local function runRequiredUnits()
     local inventory = readRequiredInventory(densityLevel, zoneId, "Counting whitelisted inventory copies for RequiredUnitCount")
     closeRequiredInventory()
     local available, availabilityReason = combinedRequiredAvailability(plot, zoneId, inventory.summary)
-    if not available or FinalEquipMode == "Best" or densityLevel == 0 then
-        local reason = availabilityReason or (FinalEquipMode == "Best" and "FinalEquipMode is Best." or "density level is 0.")
+    if not available or FinalEquipMode == "Best" then
+        local reason = availabilityReason or "FinalEquipMode is Best."
         return "Skipped: " .. reason .. " Displayed units kept in place; Mutate Units skipped."
     end
 
@@ -6244,8 +6239,21 @@ local function upgradeDisplayedSlots(plot, slots, cap, stageText, heading, optio
         checkSlot(slot)
         if cache then attachCachedUnit(cache, slot) end
         local level = slot.cachedStats and slot.cachedStats.Damage.level or readLevel(slot.holder)
-        slot.startLevel, slot.level = level, level
         slot.damageCap = cap
+        if options.fullDamageMaximum then
+            session = session or createUnitStatSession(plot, 1)
+            session.open(slot)
+            local damage = session.readStat(slot, "Damage")
+            local maximum = damage.maximum
+            if type(maximum) ~= "number" or maximum ~= maximum or maximum < 1
+                or maximum % 1 ~= 0 or maximum == math.huge then
+                error(slot.holder.Name .. ": actual maximum Damage level is missing or invalid; old-unit Damage stopped.", 0)
+            end
+            level, slot.damageCap = damage.level, maximum
+            pause(settings.BeforeExitDelay)
+            closeStatFocus()
+        end
+        slot.startLevel, slot.level = level, level
         if options.halfDamageMaximum then
             local maximum = slot.cachedStats and slot.cachedStats.Damage.maximum
             if type(maximum) ~= "number" or maximum ~= maximum or maximum < 1
@@ -6342,16 +6350,12 @@ modules.upgradingOldUnit = {run = function()
     local allowed = {}
     for _, name in ipairs(previousRule and previousRule.Names or {}) do allowed[name] = true end
     if next(allowed) == nil then return "Skipped: " .. previousZoneId .. " has no configured required unit names." end
-    local cap = CONFIG.UpgradingOldUnit.TargetLevel
-    if type(cap) ~= "number" or cap ~= cap or cap < 1 or cap % 1 ~= 0 or cap == math.huge then
-        error("CONFIG.UpgradingOldUnit.TargetLevel must be a finite positive whole number.", 0)
-    end
     local plot = getMyPlot()
     checkPlot(plot)
     local holders = path(plot, {"Holders"})
     local slots = {}
-    logUnitUpgradeDetail(string.format("Current zone=%s; density=%d; ONLY previous zone %s Names are eligible; old-unit target level=%d.",
-        zoneId, densityLevel, previousZoneId, cap))
+    logUnitUpgradeDetail(string.format("Current zone=%s; density=%d; ONLY previous zone %s Names are eligible; old-unit target is each unit's own maximum Damage level.",
+        zoneId, densityLevel, previousZoneId))
     for _, holder in ipairs(holders:GetChildren()) do
         local number = tonumber(holder.Name:match("^M(%d+)$"))
         if number and number >= 1 and isDisplayed(holder) then
@@ -6367,10 +6371,10 @@ modules.upgradingOldUnit = {run = function()
     end
     table.sort(slots, function(a, b) return a.number < b.number end)
     if #slots == 0 then return "Skipped: no displayed units match " .. previousZoneId .. " required Names." end
-    local damageRequests = upgradeDisplayedSlots(plot, slots, cap, oldStatus,
-        "Upgrading ONLY " .. previousZoneId .. " required units (Damage only)", {scope = "Upgrade Old Units"})
-    return string.format("%s: processed %d displayed units from %s Names only; sent %d Damage requests. Old-unit target level: %d.",
-        zoneId, #slots, previousZoneId, damageRequests, cap)
+    local damageRequests = upgradeDisplayedSlots(plot, slots, nil, oldStatus,
+        "Upgrading ONLY " .. previousZoneId .. " required units (Damage only)", {scope = "Upgrade Old Units", fullDamageMaximum = true})
+    return string.format("%s: processed %d displayed units from %s Names only; sent %d Damage requests. Old-unit target: each unit's own maximum Damage level.",
+        zoneId, #slots, previousZoneId, damageRequests)
 end}
 
 local function upgradeZoneDamage(plot, zoneId, densityLevel, cache)
