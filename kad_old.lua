@@ -5,7 +5,6 @@ local scriptLoadedAt = os.time()
 
 local CONFIG = {
     General = {
-        DeleteOtherPlots = true,
         WorkspaceCleanupEnabled = false,
         LoadTimeout = math.huge, -- Unlimited waits; retry reports are configured under Logging.
         RetryInterval = 1,
@@ -17,12 +16,53 @@ local CONFIG = {
         ButtonDebounce = 0.25,
         DefaultClickEvent = "MouseButton1Click",
     },
+    Trade = {
+        -- Add Content.ItemName.Text values to each list (case-insensitive); each preset gets its own button.
+        TradePreset = "Preset-1",
+        ["trade-preset"] = {
+            -- Dropdown order follows this list; move whole entries to reorder.
+            { Name = "for-daily", Items = {"Gems", "Summon Scroll", "Enchanted Dice", "Violet Berserker", "Space Overlord", "Blue Flame Fighter", "Pirate King", "Marked Rival", "Prospector's Bottle II", "Mutation Luck Potion III", "Haste Potion II", "Unearth Elixir II", "Summon Luck Potion", "Regrowth Potion", "Haste Potion" } },
+            { Name = "index", Items = {
+               "Ignis Crimson",
+               "King Biku",
+               "King Biku Shiny",
+               "Sandy Bag",
+               "Heart Surgeon",
+               "Lazy Justice",
+               "Cursed Ring",
+               "Hawk Eye Blade",
+               "Iron Fist Marine",
+               "Sorcerer Killer",
+               "King Of Namek",
+               "Bounce Brawler",
+               "Ten Tails Host",
+               "Baryon Chakra",
+               "Sixth Panther",
+               "Beast Scholar",
+               "Earring Fusion",
+               "Perfect Lifeform",
+               "Kid Fusion",
+               "Tea Party Queen",
+               "Clown Emperor",
+               "Cat Burglar",
+               "Space Overlord",
+               "Violet Berserker"
+            } },
+        },
+        TradeBagPoll = 1,
+        TradePresetItemDelay = 0.05, -- Between cards and around the Track click.
+        TradeTrackRightInset = 20, -- Click this many pixels inside the Track right edge.
+        TradeTrackRetry = 1, TradeMaxAmount = 999,
+        TradeAddConfirmTimeout = 5, TradeAddPoll = 0.1,
+        ConsoleLogs = true, VerboseLogs = false, LogRepeatInterval = 5,
+        TradePoll = 0.5, TradeAcceptReadyPoll = 1, TradeClickInterval = 1, DefaultClickEvent = "MouseButton1Click",
+    },
     DailyRewards = {
         DefaultSpinEnabled = true,
         DefaultRedeemEnabled = true,
         SpinInterval = 24 * 60 * 60 + 10,
         CodeDelay = 2,
-        Codes = { "Hallowkeep", "Moonrise", "Feasts", "ONANDON", "ACES", "AZURE" },
+        Codes = { "Hallowkeep", "Moonrise", "Feasts", "ONANDON", "ACES", "AZURE", "PICKSTORM"},
     },
     Flow = {
 
@@ -71,7 +111,7 @@ local CONFIG = {
         StandHeight = 2,
     },
     Upgrades = {
-        DiscordWebhookUrl = "https://discord.com/api/webhooks/1568681244340920331/aRrPlNNswoFe-a5VzDDf4IcwCuqbjePGpbWs1zmlejxj_j8QBXn3Nu0DqHeIB6MuTiHH",
+        DiscordWebhookUrl = "https://discord.com/api/webhooks/1567300810436780103/SsMfBRMJrsL4o567CYVrThCgjJVIO6V5LX84h2pWpbphaJrQ7gCofJN9SSNK3OdxISft",
         SelectCurrentZone = true,
         SelectNextZone = true,
         RequestDelay = 0.35,
@@ -363,7 +403,7 @@ local CONFIG = {
         InitialTab = "master",
         Width = 620, Height = 620,
         ExpandedScale = 0.9,
-        MinimizedWidth = 342, MinimizedHeight = 164,
+        MinimizedWidth = 342, MinimizedHeight = 224,
         Colors = {
             bg = Color3.fromRGB(22, 25, 34), surface = Color3.fromRGB(31, 35, 47),
             muted = Color3.fromRGB(164, 174, 196), text = Color3.fromRGB(235, 240, 250),
@@ -413,7 +453,7 @@ end
 local alive, busy = true, false
 local worker, activeStage, activeRun = nil, nil, nil
 local minimizedActions = {rollEnabled = false, rollWorker = nil, openBusy = false, openWorker = nil}
-local runScope = {current = nil, threads = setmetatable({}, {__mode = "k"}), background = {}, callbacks = {}}
+local runScope = {buttonOwners = setmetatable({}, {__mode = "kv"}), masterAllowed = {}, current = nil, threads = setmetatable({}, {__mode = "k"}), background = {}, callbacks = {}}
 local connections, shownPrompts = {}, {}
 local heldPrompt, heldKey, mouseHeld = nil, nil, nil
 local originalRoot, originalCFrame = nil, nil
@@ -588,6 +628,9 @@ end
 
 local preferences = {
     masterEnabled = CONFIG.Flow.DefaultMasterEnabled,
+    autoAcceptTradeEnabled = true,
+    autoReadyTradeEnabled = true,
+    indexPlacedUnits = {},
     masterActivatedOnce = false,
     tutorialHidden = false,
     firstLoadedAt = scriptLoadedAt,
@@ -599,7 +642,6 @@ local preferences = {
     stages = {},
 }
 assert(type(preferences.masterEnabled) == "boolean", "CONFIG.Flow.DefaultMasterEnabled must be boolean.")
-assert(type(CONFIG.General.DeleteOtherPlots) == "boolean", "CONFIG.General.DeleteOtherPlots must be boolean.")
 assert(type(CONFIG.General.WorkspaceCleanupEnabled) == "boolean", "CONFIG.General.WorkspaceCleanupEnabled must be boolean.")
 for _, id in ipairs(order) do
     local enabled = CONFIG.Flow.DefaultStages[id]
@@ -607,6 +649,7 @@ for _, id in ipairs(order) do
     preferences.stages[id] = enabled
 end
 local savePreferences
+local indexQueueCached = false
 do
     local file = string.format("automation_preferences_%s_%s.json", tostring(game.GameId), tostring(player.UserId))
     local storageAvailable = type(isfile) == "function" and type(readfile) == "function" and type(writefile) == "function"
@@ -623,6 +666,9 @@ do
             version = 1,
             gameId = tostring(game.GameId), userId = tostring(player.UserId),
             masterEnabled = preferences.masterEnabled,
+            autoAcceptTradeEnabled = preferences.autoAcceptTradeEnabled,
+            autoReadyTradeEnabled = preferences.autoReadyTradeEnabled,
+            indexPlacedUnits = preferences.indexPlacedUnits,
             masterActivatedOnce = preferences.masterActivatedOnce,
             tutorialHidden = preferences.tutorialHidden,
             firstLoadedAt = preferences.firstLoadedAt,
@@ -635,7 +681,6 @@ do
             selectCurrentZone = CONFIG.Upgrades.SelectCurrentZone,
             selectNextZone = CONFIG.Upgrades.SelectNextZone,
             unlimitedBestPickaxe = CONFIG.Pickaxe.UnlimitedBestPickaxe,
-            deleteOtherPlots = CONFIG.General.DeleteOtherPlots,
             workspaceCleanupEnabled = CONFIG.General.WorkspaceCleanupEnabled,
         }
         local encodedOK, encoded = pcall(HttpService.JSONEncode, HttpService, data)
@@ -646,6 +691,8 @@ do
             storageWarning("Cannot verify " .. file .. "; changes may not be retained on the next run.")
             return false
         end
+        indexQueueCached = next(data.indexPlacedUnits) ~= nil
+        if minimizedActions.refreshIndexQueue then minimizedActions.refreshIndexQueue() end
         return true
     end
     local function loadPreferences()
@@ -671,6 +718,18 @@ do
             return fallback
         end
         preferences.masterEnabled = booleanOrDefault(data.masterEnabled, preferences.masterEnabled)
+        preferences.autoAcceptTradeEnabled = booleanOrDefault(data.autoAcceptTradeEnabled, true)
+        -- Older preferences used one toggle for both accepting requests and readying trades.
+        preferences.autoReadyTradeEnabled = booleanOrDefault(data.autoReadyTradeEnabled, preferences.autoAcceptTradeEnabled)
+        preferences.indexPlacedUnits = {}
+        if type(data.indexPlacedUnits) == "table" then
+            for name, placed in pairs(data.indexPlacedUnits) do
+                if type(name) == "string" and name ~= "" and placed == true then
+                    preferences.indexPlacedUnits[name:lower()] = true
+                end
+            end
+        end
+        indexQueueCached = next(preferences.indexPlacedUnits) ~= nil
         preferences.masterActivatedOnce = booleanOrDefault(data.masterActivatedOnce, false)
         preferences.tutorialHidden = booleanOrDefault(data.tutorialHidden, false)
         preferences.dailySpinEnabled = booleanOrDefault(data.dailySpinEnabled, preferences.dailySpinEnabled)
@@ -711,13 +770,13 @@ do
         CONFIG.Upgrades.SelectCurrentZone = booleanOrDefault(data.selectCurrentZone, CONFIG.Upgrades.SelectCurrentZone)
         CONFIG.Upgrades.SelectNextZone = booleanOrDefault(data.selectNextZone, CONFIG.Upgrades.SelectNextZone)
         CONFIG.Pickaxe.UnlimitedBestPickaxe = booleanOrDefault(data.unlimitedBestPickaxe, CONFIG.Pickaxe.UnlimitedBestPickaxe)
-        CONFIG.General.DeleteOtherPlots = booleanOrDefault(data.deleteOtherPlots, CONFIG.General.DeleteOtherPlots)
         CONFIG.General.WorkspaceCleanupEnabled = booleanOrDefault(data.workspaceCleanupEnabled, CONFIG.General.WorkspaceCleanupEnabled)
 
         if data.selectCurrentZone == nil or data.selectNextZone == nil or data.unlimitedBestPickaxe == nil
-            or data.deleteOtherPlots == nil or data.workspaceCleanupEnabled == nil
+            or data.workspaceCleanupEnabled == nil
             or data.tutorialHidden == nil or data.discordNotifications == nil
             or data.dailySpinEnabled == nil or data.autoRedeemEnabled == nil or data.redeemedCodes == nil
+            or data.autoAcceptTradeEnabled == nil or data.autoReadyTradeEnabled == nil or data.indexPlacedUnits == nil
             or not validFirstLoadedAt or type(data.stages) == "table" and data.stages.unlockSlots == nil then
             savePreferences()
         end
@@ -735,6 +794,8 @@ local colors = CONFIG.UI.Colors
 local function connect(signal, callback)
     local connection = signal:Connect(function(...)
         if not alive then return end
+        local owner = runScope.buttonOwners[signal]
+        if busy and activeRun == "master" and owner and not runScope.masterAllowed[owner] then return end
         local thread = coroutine.running()
         runScope.callbacks[thread] = true
         local ok, message = pcall(callback, ...)
@@ -752,6 +813,7 @@ local function actionIsCurrent(token)
             and not (busy and activeRun == "master")
     elseif token.kind == "open" then
         return minimizedActions.openToken == token and minimizedActions.openBusy
+            and not (busy and activeRun == "master")
     end
     return busy and runScope.current == token
         and (token.id ~= "master" or preferences.masterEnabled)
@@ -922,64 +984,88 @@ end}
 end
 
 local function releaseInputs()
-    local prompt, key, mouse = heldPrompt, heldKey, mouseHeld
-    heldPrompt, heldKey, mouseHeld = nil, nil, nil
+    local prompt, key, mouse, promptButton = heldPrompt, heldKey, mouseHeld, runScope.heldPromptButton
+    heldPrompt, heldKey, mouseHeld, runScope.heldPromptButton = nil, nil, nil, nil
     if prompt then pcall(function() prompt:InputHoldEnd() end) end
+    if promptButton then pcall(function()
+        if promptButton.button.Parent then
+            firesignal(promptButton.button.MouseButton1Up, promptButton.point.X, promptButton.point.Y)
+        end
+    end) end
     if key then pcall(function() VIM:SendKeyEvent(false, key, false, game) end) end
     if mouse then pcall(function() VIM:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 0) end) end
 end
 
--- Master hover follows the running Master, including cycle waits and respawns.
+-- Master hover is configured once per root; the constraint handles each physics step.
 do
-    local flyRoot, attachment, velocity, watcher
+    local flyRoot, attachment, velocity, characterWatcher
+    local watchedCharacter, rootAddedWatcher, rootRemovedWatcher
     local function clearFlight()
         local oldVelocity, oldAttachment = velocity, attachment
         flyRoot, attachment, velocity = nil, nil, nil
         if oldVelocity then oldVelocity:Destroy() end
         if oldAttachment then oldAttachment:Destroy() end
     end
+    local function disconnectRootWatchers()
+        if rootAddedWatcher then rootAddedWatcher:Disconnect(); rootAddedWatcher = nil end
+        if rootRemovedWatcher then rootRemovedWatcher:Disconnect(); rootRemovedWatcher = nil end
+        watchedCharacter = nil
+    end
     local function stopFlight()
-        if watcher then watcher:Disconnect(); watcher = nil end
+        if characterWatcher then characterWatcher:Disconnect(); characterWatcher = nil end
+        disconnectRootWatchers()
         clearFlight()
     end
-    local function updateFlight()
+    local updateFlight
+    local function rootChanged(child)
+        if child.Name == "HumanoidRootPart" then updateFlight() end
+    end
+    updateFlight = function()
         if not alive or not busy or activeRun ~= "master" or not preferences.masterEnabled then
             stopFlight()
             return
         end
         local character = player.Character
+        if watchedCharacter ~= character then
+            disconnectRootWatchers()
+            watchedCharacter = character
+            if character then
+                -- Character may be assigned before its root has loaded, or its root may be replaced.
+                rootAddedWatcher = character.ChildAdded:Connect(rootChanged)
+                rootRemovedWatcher = character.ChildRemoved:Connect(rootChanged)
+            end
+        end
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if root and not root:IsA("BasePart") then root = nil end
-        local valid = flyRoot == root and velocity and velocity.Parent == root
-            and attachment and attachment.Parent == root
-        if not valid then
-            clearFlight()
-            if not root then return end
-            flyRoot = root
-            attachment = Instance.new("Attachment")
-            attachment.Name = "MasterFlyAttachment"
-            attachment.Parent = root
-            velocity = Instance.new("LinearVelocity")
-            velocity.Name = "MasterFlyVelocity"
-        end
-        -- Reassert hover and clear downward velocity before each physics step.
+        if flyRoot == root and velocity and velocity.Parent == root and velocity.Enabled
+            and attachment and attachment.Parent == root then return end
+        clearFlight()
+        if not root then return end
+        flyRoot = root
+        attachment = Instance.new("Attachment")
+        attachment.Name = "MasterFlyAttachment"
+        attachment.Parent = root
+        velocity = Instance.new("LinearVelocity")
+        velocity.Name = "MasterFlyVelocity"
         velocity.Attachment0 = attachment
         velocity.RelativeTo = Enum.ActuatorRelativeTo.World
         velocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
         velocity.VectorVelocity = Vector3.zero
         velocity.ForceLimitsEnabled = false
         velocity.Enabled = true
-        if velocity.Parent ~= root then velocity.Parent = root end
+        velocity.Parent = root
+        -- Cancel existing momentum once; the constraint prevents falling after teleports too.
         root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
     end
     modules.masterFly = {
         start = function()
             stopFlight()
             if not alive or not busy or activeRun ~= "master" or not preferences.masterEnabled then return end
+            characterWatcher = player:GetPropertyChangedSignal("Character"):Connect(updateFlight)
             updateFlight()
-            watcher = game:GetService("RunService").PreSimulation:Connect(updateFlight)
         end,
         stop = stopFlight,
+        update = updateFlight,
     }
 end
 
@@ -1041,8 +1127,9 @@ local function cleanup(destroyGui)
     end
     -- A failing module must not prevent the remaining cleanup steps from running.
     for _, entry in ipairs({
-        {"plotCleanup", "stop"}, {"masterFly", "stop"}, {"chestRecovery", "cleanup"},
+        {"masterFly", "stop"}, {"chestRecovery", "cleanup"},
         {"gameSettings", "cleanup"}, {"hotbarUpgrade", "cleanup"}, {"autoSequence", "cleanup"},
+        {"trade", "cleanup"},
         {"pickaxe", "cleanupWaiting"}, {"upgrades", "cleanup"},
         {"mutation", "cleanup"}, {"upgradingUnit", "cleanup"},
     }) do
@@ -1062,9 +1149,9 @@ local function cleanup(destroyGui)
             end
         end
     end)
-    -- Restore tutorial mining visibility after all panel-closing cleanup has finished.
     if modules.tutorial then attempt("tutorial", modules.tutorial.cleanup) end
     attempt("Restore position", restorePosition)
+    if modules.autoIndexUnits then attempt("Return to PlotSpawn", modules.autoIndexUnits.cleanup) end
     attempt("Flush logs", logging.flush)
     table.clear(shownPrompts)
     if _G.__AUTOMATION_KILL == unloadScript then
@@ -1108,7 +1195,47 @@ local function button(parent, text, position, size)
         BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = colors.text,
     })
     corner(object)
+    runScope.buttonOwners[object.Activated] = object
     return object
+end
+
+-- Draw icons with GUI strokes so they never depend on font glyph support.
+minimizedActions.drawButtonIcon = function(parent, kind)
+    local icon = make("Frame", parent, {
+        Name = "ButtonIcon", BackgroundTransparency = 1, Active = false,
+        Position = UDim2.new(0.5, -9, 0.5, -9), Size = UDim2.fromOffset(18, 18),
+        ZIndex = (parent.ZIndex or 1) + 1,
+    })
+    local function stroke(x1, y1, x2, y2)
+        local dx, dy = x2 - x1, y2 - y1
+        local segment = make("Frame", icon, {
+            Name = "IconStroke", BackgroundColor3 = colors.text, BorderSizePixel = 0, Active = false,
+            AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2),
+            Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy) + 1, 2),
+            Rotation = math.deg(math.atan2(dy, dx)), ZIndex = icon.ZIndex + 1,
+        })
+        corner(segment, 1)
+    end
+    if kind == "refresh" then
+        local radius, startAngle, endAngle = 6.5, math.rad(50), math.rad(330)
+        local x, y = 9 + radius * math.cos(startAngle), 9 + radius * math.sin(startAngle)
+        for index = 1, 14 do
+            local angle = startAngle + (endAngle - startAngle) * index / 14
+            local nextX, nextY = 9 + radius * math.cos(angle), 9 + radius * math.sin(angle)
+            stroke(x, y, nextX, nextY)
+            x, y = nextX, nextY
+        end
+        local direction = endAngle + math.pi / 2
+        for _, offset in ipairs({math.rad(-35), math.rad(35)}) do
+            stroke(x, y, x - 3.5 * math.cos(direction + offset), y - 3.5 * math.sin(direction + offset))
+        end
+    elseif kind == "next" then
+        stroke(2, 4, 7, 9)
+        stroke(7, 9, 2, 14)
+        stroke(7, 4, 12, 9)
+        stroke(12, 9, 7, 14)
+        stroke(15, 4, 15, 14)
+    end
 end
 
 local panel = make("Frame", gui, {
@@ -1157,11 +1284,12 @@ local minimizedMaster = button(minimizedControls, "Master: OFF", UDim2.fromOffse
 minimizedMaster.Name = "MinimizedMaster"
 minimizedMaster.TextSize = 14
 do
-    local updateStatus = label(minimizedControls, "", UDim2.fromOffset(0, 126), UDim2.new(1, 0, 0, 0), 11)
+    local updateStatus = label(minimizedControls, "", UDim2.fromOffset(0, 186), UDim2.new(1, 0, 0, 0), 11)
     updateStatus.Name, updateStatus.Visible = "MinimizedUpdateStatus", false
     local currentStatus
     minimizedActions.getHeight = function()
-        return CONFIG.UI.MinimizedHeight + (updateStatus.Visible and 4 + updateStatus.Size.Y.Offset or 0)
+        return CONFIG.UI.MinimizedHeight + (minimizedActions.presetExtraHeight or 0)
+            + (updateStatus.Visible and 4 + updateStatus.Size.Y.Offset or 0)
     end
     minimizedActions.refreshStatus = function()
         local text = currentStatus and currentStatus.Text or ""
@@ -1305,7 +1433,7 @@ end
 
 do
     local notificationBox = make("TextLabel", minimizedControls, {
-        Name = "MinimizedNotificationBox", Position = UDim2.fromOffset(0, 98), Size = UDim2.new(1, 0, 0, 24),
+        Name = "MinimizedNotificationBox", Position = UDim2.fromOffset(0, 158), Size = UDim2.new(1, 0, 0, 24),
         BackgroundColor3 = colors.idle, BackgroundTransparency = 0, BorderSizePixel = 0, Visible = true,
         Text = "Notifications", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = colors.text,
         TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center, ZIndex = 5,
@@ -1402,7 +1530,7 @@ local specs = {
     {"pickaxe", "Pickaxe", "Buy Best Pickaxe", "1. Check the current zone, then open, refresh, and close the shop.\n2. Find the highest unlocked pickaxe; at the max zone, also select the second highest.\n3. Check each saved count against the same limit and require its buy button to be green.\n4. Record and send one purchase request per eligible selection."},
     {"upgrades", "Upgrades", "Run Upgrades", "1. Read the current zone from your ZoneBoard.\n2. Recheck Colossus Pips as upgrades run.\n3. Prioritize eligible Density, then other available nodes.\n4. Turn stages 3-4 and 6-8 OFF as soon as Colossus Pips reach 1 or higher in the current zone; otherwise turn them ON.\nTurn Unlimited Best Pickaxe ON at the max zone and OFF in other zones. Check zone/Density fresh every cycle, including while OFF."},
     {"upgradingOldUnit", "Upgrade Old Units", "Run Upgrade Old Units", "1. Check that current-zone Density is 0.\n2. Find displayed units matching the previous zone's required names.\n3. Upgrade Damage toward the target, starting with the lowest level.\n4. Stop when the target is reached or further upgrades are unavailable."},
-    {"unlockSlots", "Unlock slots", "Run Unlock slots", "Z4 only. Try each locked slot up to five times with a random one-stud offset and a two-second hold. Stop at the first slot still locked after five attempts; skip stages 6-8 that cycle. Once all slots unlock, skip this stage on later cycles."},
+    {"unlockSlots", "Unlock slots", "Run Unlock slots", "Z4 only. Unlock slots in order while cash is greater than the current slot cost. Retry without a fixed limit, holding for 5 seconds, then 10, 15, and so on after failures. Skip this stage when cash is insufficient. Once all slots unlock, skip this stage on later cycles."},
     {"units", "Required Units", "Run Required Units", "1. Check cooldown and clear the hotbar.\n2. Count whitelisted inventory copies plus displayed units.\n3. If eligible, remove displayed units.\n4. Fill empty unlocked pads using one stack at a time through hotbar 1."},
     {"mutation", "Mutate Units", "Run Mutate Units", "1. Check zone rules, Density, and Required Units preparation.\n2. Scan mutations in the first required unlocked holders.\n3. Roll eligible units below the active targets.\n4. Rescan until the targets are met or further rolls are unavailable."},
     {"upgradingUnit", "Upgrade Units", "Run Upgrade Units", "1. Check cooldown and scan the required lineup.\n2. Upgrade Damage to the allowed cap, with stat catch-up between batches.\n3. Finish Speed and MineSpeed catch-up on eligible units."},
@@ -1420,6 +1548,7 @@ for index, spec in ipairs(specs) do
         })
     end
     tabs[id] = tab
+    runScope.masterAllowed[tab] = true
     local scrollable = id == "master" or id == "cycleEnd"
     local frame = make(scrollable and "ScrollingFrame" or "Frame", content,
         {Name = id, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false})
@@ -1579,8 +1708,8 @@ do
     masterLayout.automation = make("Frame", masterLayout.body, {Name = "AutomationSettings", LayoutOrder = 4,
         Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1})
     masterLayout.stack(masterLayout.automation, 8)
-    masterLayout.settingSlots = {WorkspaceCleanupToggle = {1, 0}, DeleteOtherPlotsToggle = {1, 1},
-        AutoDailySpinToggle = {2, 0}, AutoRedeemToggle = {2, 1}}
+    masterLayout.settingSlots = {WorkspaceCleanupToggle = {1, 0},
+        AutoDailySpinToggle = {1, 1}, AutoRedeemToggle = {2, 0}}
     masterLayout.automationRows = {}
     for index = 1, 2 do
         masterLayout.automationRows[index] = make("Frame", masterLayout.automation, {Name = "SettingsRow" .. index,
@@ -1594,9 +1723,9 @@ do
         master = [[MASTER FLOW
 Run enabled stages in the configured order. Each stage button can also run its stage once. Master repeats until stopped; saved Master/stage toggles are restored on load.
 
-Before starting, save any pending Pickaxe limit edit when Pickaxe is enabled. Reject overlapping runs and rapid repeat clicks. Master turns off enchant rolling before starting the run. Fly keeps the character afloat throughout the active Master run, including between teleports, prompt holds, and cycle waits, and resumes after respawning. Master OFF, stopping the run, or unloading disables fly. Waiting for ZoneBoardGui and standalone stages do not enable fly.
+Before starting, save any pending Pickaxe limit edit when Pickaxe is enabled. Reject overlapping runs and rapid repeat clicks. Master turns off enchant rolling before starting the run. Fly keeps the character afloat throughout the active Master run, including between teleports, prompt holds, and cycle waits, and resumes after respawning. Master OFF, stopping the run, or unloading disables fly. Master hover also stays active while waiting for ZoneBoardGui; standalone stages do not enable fly.
 
-Start each cycle with fresh cycle state. Wait for your owned plot's ZoneBoard.ZoneBoardGui.Root.List and readable zone locks, then confirm the current zone before settings, rewards, or stages. There is no separate game-load checker. Start Master fly after the first zone confirmation. At the start of the first Master cycle, check live game settings: turn Exotic/Mythical cutscenes and Mutations/Summons reveals OFF when their Content.BackgroundColor3 is (38, 148, 84), and turn NightMode ON when its Content.BackgroundColor3 is (80, 80, 80). Skip already-correct values and confirm each change; no settings completion file is used. During Master, read each setting Content.BackgroundColor3 and send a toggle request if it differs from the desired state. If confirmation fails, set PlayerGui.ScreenGui.CutGrassGame.SettingsFrame.Visible=true for 1 second, close it with Visible=false, then re-read and resend only while the setting is still wrong. Repeat until all five settings are confirmed. Tutorial Stage 0 performs the same live check. Enabled automatic Workspace cleanup runs when a unit sequence starts, sharing its five-minute cooldown and zone/manual resets. Cleanup failures wait for the next eligible unit sequence. Other-plot/weather cleanup starts after Sell. Skip disabled stages, except Upgrades still prepares cached zone/Density values. Restore temporary movement and release held inputs after each stage. Pause between stages.
+Start each cycle with fresh cycle state. Wait for your owned plot's ZoneBoard.ZoneBoardGui.Root.List and readable zone locks, then confirm the current zone before settings, rewards, or stages. There is no separate game-load checker. Start Master hover immediately when the Master run begins, including while waiting for the first zone confirmation. At the start of the first Master cycle, check live game settings: turn Exotic/Mythical cutscenes and Mutations/Summons reveals OFF when their Content.BackgroundColor3 is (38, 148, 84), and turn NightMode ON when its Content.BackgroundColor3 is (80, 80, 80). Skip already-correct values and confirm each change; no settings completion file is used. During Master, read each setting Content.BackgroundColor3 and send a toggle request if it differs from the desired state. If confirmation fails, set PlayerGui.ScreenGui.CutGrassGame.SettingsFrame.Visible=true for 1 second, close it with Visible=false, then re-read and resend only while the setting is still wrong. Repeat until all five settings are confirmed. Tutorial Stage 0 performs the same live check. Check the shared unit-sequence cooldown once at cycle start. A ready cycle gets permission for Required Units, Upgrade Units, and enabled automatic Workspace cleanup before starting the shared timer. That permission stays fixed for the cycle. Workspace cleanup removes other MinePlots, weather, and extras together, and also runs with Required Units OFF. Zone changes and Reset Cooldown affect the next cycle's check. Skip disabled stages, except Upgrades still prepares cached zone/Density values. Restore temporary movement and release held inputs after each stage. Pause between stages.
 
 On a stage error, show its error, close Sell/skill-tree/inventory panels, and retry on the next cycle. Still attempt Cycle end if enabled. During the cycle delay, visit the pickaxe shop and click its first two purchase rows; see the Pickaxe guide. The minimized notification box turns red while a reported retry/stage error is active. Otherwise it turns green when the latest zone/Colossus scan confirms the highest configured zone with at least 1 valid Colossus Pip, and stays neutral in other cases. Red takes priority over green; recovery restores the applicable color. Expected mutation rolls are excluded.
 
@@ -1605,9 +1734,9 @@ Stop, Master OFF, unload, or the relevant shortcuts cancel active work, restore 
 MASTER CONTROLS
 Stage toggles select the repeated flow. Reset Cooldown is in Required Units. A confirmed zone change resets the unit-sequence cooldown. The zone card shows cached requirements and observed progress.
 
-Unlimited Best Pickaxe bypasses the saved limit for the highest unlocked pickaxe and, at the max zone, the second-highest unlocked pickaxe, while retaining separate per-ID request counts. Delete other plots / weather removes other plots and weather effects while enabled; rejoin to restore removed plots.
+Unlimited Best Pickaxe bypasses the saved limit for the highest unlocked pickaxe and, at the max zone, the second-highest unlocked pickaxe, while retaining separate per-ID request counts. Auto Workspace cleanup removes other MinePlots, weather effects, and unused Workspace extras together on the shared unit-sequence cooldown; rejoin to restore deleted content.
 
-Ctrl+1 toggles Master; Ctrl+2 toggles enchant rolling; Ctrl+3 opens Altar; Ctrl+4 Events Board; Ctrl+5 Mailbox; Ctrl+6 Trial. Rolling/teleport shortcuts turn Master OFF and are ignored while typing.
+Ctrl+1 toggles Master; Ctrl+2 toggles enchant rolling; Ctrl+3 opens Altar; Ctrl+4 Events Board; Ctrl+5 Mailbox; Ctrl+6 Trial. Other action shortcuts are disabled while Master is ON. All shortcuts are ignored while typing.
 
 HOTBAR UPGRADES
 Refresh and select hotbar entries to process their copies through M1. This is a separate run, outside the nine-stage cycle. Use the same UpgradePart teleport and placement/pickup timing as Units, the Mutation stage panel opener, and the Upgrade Unit Stats session. Place each selected copy, check its identity, and mutate it to Unreal. Click Stats without closing the unit panel, then read Damage, Speed, and Mining levels. Upgrade only stats below their goals: Damage to the configured target and Speed/Mining to their available maxima. Use the regular Mutation stage focused-panel rank check before and after each rapid roll. Stop rolling as soon as that rank reaches Unreal, then click Stats in the same open UI. Before pickup, check the same focused mutation rank again, return to Stats, and verify all three levels. If the mutation is below Unreal, resume rolling in that same UI. If a returned unit leaves a multi-copy stack unchanged, continue other selected slots but report remaining indistinguishable copies as incomplete rather than counting repeated checks as new units. A unit already at Unreal with all upgrade goals met completes only its own check; continue through every remaining selected hotbar slot before reporting the batch finished. Before selecting each hotbar unit, including placement retries, set MineGui.HotbarFrame.Visible=true directly. If HotbarFrame or its slot container is missing, wait for it to load and enable Visible; do not open inventory to restore the hotbar. Stop on changed hotbar identity/count, missing M1 controls, or unavailable upgrades. Retry unconfirmed placement/pickup by returning to M1 with a different random one-stud horizontal offset and rechecking identity, occupancy, and stack consumption before activating its prompt again.]],
@@ -1650,11 +1779,11 @@ Before Density is fully upgraded, other available nodes must be above its next-n
 Use configured node-category mappings, falling back to the node base name. Skip invalid categories. Recheck the node, its color, and the Density II gate before each purchase. Retry while the node remains available, respecting the request delay and reporting prolonged retries. Stop processing a node when it disappears, becomes unavailable, or valid Colossus Pips reach 1 or higher in the current zone. Rescan Density and count confirmed green upgrades; repeat while upgrades are confirmed.
 
 COLOSSUS / NOTIFICATIONS
-Positive valid Colossus Pips confirms the unlock. Turn stages 3-4 and 6-8 OFF as soon as valid Colossus Pips reach 1 or higher (for example 1/5), in any current zone; otherwise turn stages 3-4 and 6-8 ON. Turn Unlimited Best Pickaxe ON at the max zone, even without positive Colossus Pips, and OFF in other zones. Send a Colossus alert with username, zone name/ID, and Pips. Reaching the highest configured zone sends a separate max-zone alert to the same webhook.
+Positive valid Colossus Pips confirms the unlock. Turn stages 3-4 and 6-8 OFF as soon as valid Colossus Pips reach 1 or higher (for example 1/5), in any current zone; otherwise turn stages 3-4 and 6-8 ON. Turn Unlimited Best Pickaxe ON at the max zone, even without positive Colossus Pips, and OFF in other zones. Send a Discord alert with username, zone name/ID, and Pips only when the player is in the highest configured zone and has at least 1 valid Colossus Pip. Reaching the max zone alone or unlocking Colossus in a lower zone does not send an alert.
 
-Both messages end their elapsed-time line with @everyone. Time is measured from the account/game's cached first script load, including restarts and offline time. Old caches missing a valid timestamp start tracking on their next load. Under one hour displays unknown. A valid saved timestamp is retained.
+The message ends its elapsed-time line with @everyone. Time is measured from the account/game's cached first script load, including restarts and offline time. Old caches missing a valid timestamp start tracking on their next load. Under one hour displays unknown. A valid saved timestamp is retained.
 
-Each notification type has its own sent flag per zone. Pending requests suppress duplicates in the current run; successful HTTP responses save the sent flag in the preferences cache. Failed requests can be retried on later checks. Missing webhook/request support skips sending. A cache-save failure is warned because it can allow a repeat after restarting.
+The combined max-zone + Colossus alert uses the Colossus sent flag per zone. Pending requests suppress duplicates in the current run; successful HTTP responses save the sent flag in the preferences cache. Failed requests can be retried on later checks. Missing webhook/request support skips sending. A cache-save failure is warned because it can allow a repeat after restarting.
 
 WHEN UPGRADES IS OFF
 In Master, freshly read the ZoneBoard zone, Density, and Colossus Pips every cycle, including while Upgrades is OFF. Open the skill tree by enabling SkillTreeFullFrame.Visible, wait for Tree.Canvas and the board-selected zone, then read upgrade data and send requests. Missing or unsettled Density data is retried until ready or stopped. Recheck Colossus progress in the current zone. If valid Colossus Pips have not reached 1, turn stages 3-4 and 6-8 ON and resume Upgrades in the same cycle. Turn Unlimited Best Pickaxe ON at the max zone and OFF in other zones. These scans also prepare zone selection and tutorial hiding.
@@ -1673,7 +1802,7 @@ ACTIONS
 STOPS
 Skip if no displayed unit matches. Stop a unit at the target or when Damage is unavailable; stop with an error if ownership, identity, character, required controls, or expected response is lost. This stage does not run Speed/MineSpeed catch-up.]],
         units = [[ENTRY CONDITIONS
-Require Density 1 or higher in Z1-Z11, or Density 0 or higher in Z12 and above. Check the shared unit-sequence cooldown before refreshing anything. If active, keep displayed units and skip. Reset Cooldown clears it; a new zone resets it. Validate the equipment mode, use cached zone/Density, check plot ownership, and start the sequence cooldown.
+Require Density 1 or higher in Z1-Z11, or Density 0 or higher in Z12 and above. Use the shared cooldown permission granted at Master cycle start; manual runs check the cooldown directly. Without permission, keep displayed units and skip. Reset Cooldown clears it; a new zone resets it. Validate the equipment mode, use cached zone/Density, and check plot ownership. Manual runs start the sequence cooldown here; Master keeps the timer started at cycle entry.
 
 AVAILABILITY CHECK
 Clear occupied hotbar assignments, open InventoryFrame with Visible=true, and count current-zone whitelisted copies directly from inventory, including stack quantities. Close inventory with Visible=false. Skip unreadable Damage values. Add matching displayed units to this inventory count; no inventory card is selected during the check. If insufficient, FinalEquipMode is Best, or Density is below the current zone minimum, keep displayed units and skip replacement/mutation preparation. Equip Best is handled at Cycle end.
@@ -1703,7 +1832,7 @@ For Inferno/Nightmare/Unreal requirements, keep focus and rapidly roll toward th
 STOP / COMPLETE
 Stop when required slots satisfy their Diamond minimum and applicable quotas, funds are unavailable, Density II is confirmed, required holders disappear, mutation text is unreadable, the character/plot changes, or a panel/scan times out. Update observed mutation progress as rolls complete and close focus during cleanup. Zero tier counts skip rolling but do not remove the Diamond requirement used by full Damage and Density II gates.]],
         upgradingUnit = [[ENTRY CONDITIONS
-Use the current cycle's Required Units sequence allowance when present. Otherwise check the shared cooldown and start a new sequence only when ready. Consume that allowance for this run. Validate cached Density, check plot ownership, close previous focus, and scan displayed units.
+Use the shared cooldown permission granted at Master cycle start. Manual runs check the shared cooldown directly and start a sequence only when ready. Consume that allowance for this run. Validate cached Density, check plot ownership, close previous focus, and scan displayed units.
 
 FULL DAMAGE GATE
 The exact required slots must all be displayed, match current-zone Names, and be Diamond or higher. Configured mutation quotas must pass. If the gate fails, only displayed current-zone whitelisted units receive Damage toward level 10; no other units receive Damage in that branch.
@@ -1719,16 +1848,16 @@ Cache identities and initial Damage/Speed/Mining levels for this run. Refresh Sp
 STOPS
 Unavailable upgrade buttons stop progress rather than sending requests. Unfinished stat catch-up pauses further Damage. Identity, plot, character, display, focus-target, unreadable-level, or invalid-response failures stop the stage. Close the focused unit panel on exit.]],
         unlockSlots = [[ACTIONS
-1. Run only in Z4. Scan all numbered holder slots in numeric order before Required Units. Compare trimmed, lowercase ActionText only to the exact values "unlock" and "unlock at the hub"; ignore other text containing "unlock".
-2. If no matching unlock prompts are found, skip this stage and continue stages 6-8 normally. Otherwise move to the lowest matching locked slot, unequip tools, and activate its enabled prompt.
-3. Make up to five attempts per locked slot. Every attempt teleports using a different random one-stud horizontal offset and holds the unlock prompt for two seconds. During Master, fly stays enabled for the whole run. After every failed attempt, send a fresh Equip Best request.
-4. Confirm the slot now offers Place or Pick Up before attempting any higher matching locked slot, with its own five-attempt limit. A previously targeted lower slot not confirmed unlocked blocks higher slots; unrelated prompt text is ignored. Stop at the first matching slot still locked after five attempts. Reacquire prompts and recheck the exact ActionText before teleporting and holding.
+1. Run only in Z4. Scan numbered holder slots in numeric order before Required Units. Require HolderPrompt.Enabled=true and match trimmed, lowercase ActionText exactly to "unlock" or "unlock at the hub"; skip disabled prompts and unrelated prompt text.
+2. Read leaderstats.Cash.Value and the selected holder's Pad.HolderLabel.BG.CharName.Text before every attempt and again immediately before holding. Parse currency suffixes such as $1.6M and $43.2NovG. Cash must be strictly greater than the unlock cost; equal or lower cash skips only Unlock slots. Missing or unreadable amounts wait without attempting an unlock.
+3. Retry the first pending locked slot without a fixed attempt limit while cash is sufficient. Hold for 5 seconds on the first attempt, then 10, 15, 20, and so on after failed holds. Restart at 5 seconds for each new slot. Each attempt teleports two studs higher than the normal unit height when range permits, with a different random horizontal offset up to one stud, keeping both inside the prompt activation range; after every failed attempt, send a fresh Equip Best request. Master fly stays enabled during the run.
+4. Confirm an enabled pending slot offers Place or Pick Up before moving to a higher slot. A pending slot whose prompt becomes disabled is skipped. Temporary missing or changed prompts do not allow advancing past an enabled slot. If no enabled unlock prompts are found and no slot is pending, skip this stage and continue stages 6-8 normally.
 
 UNIT-STAGE RECOVERY
-A slot that stays locked after five attempts skips stages 6-8 for the current cycle; Cycle end still runs if enabled. If all slots unlock, stages 6-8 run normally and future cycles skip Unlock slots for that plot. If Required Units (stage 6) reports a required slot without its unlocked placement prompt in Z4, clear the completed-unlock state and return to this stage with the same five-attempt limit; stages 6-8 stay skipped for that failed cycle. Saved stage toggles stay unchanged.
+If all slots unlock, stages 6-8 run normally and future cycles skip Unlock slots for that plot. If Required Units reports a missing unlocked placement prompt in Z4, clear the completed-unlock state and return here using the same cash checks and increasing hold times; stages 6-8 stay skipped for that failed cycle. Saved stage toggles stay unchanged.
 
 STOPS
-Stop/unload cancels retries, releases held input, and disables Master fly. Other zones skip this stage. Retry Equip Best requests do not suppress the normal Cycle end Equip Best request.]],
+Insufficient cash ends this stage; it does not disable later unit stages. Stop/unload cancels retries, releases held input, and disables Master fly. Other zones skip this stage. Retry Equip Best requests do not suppress the normal Cycle end Equip Best request.]],
         cycleEnd = [[ACTIONS
 1. Check plot ownership. Request Equip Best, wait the configured delay, and refresh observed mutation progress when a zone is known. A repeated cycle-end request in the same cycle is skipped.
 2. Select the cached current zone if its toggle is ON.
@@ -1756,6 +1885,7 @@ Master attempts this stage after normal stages, including after a stage error, w
     })
     local body = label(scroll, "", UDim2.fromOffset(0, 0), UDim2.new(1, -16, 0, 0), 14)
     body.Name, body.AutomaticSize, body.TextColor3 = "GuideText", Enum.AutomaticSize.Y, colors.text
+    runScope.masterAllowed[back] = true
     connect(back.Activated, function() stageGuide.Visible = false end)
     for _, spec in ipairs(specs) do
         local id, page = spec[1], pages[spec[1]]
@@ -1763,6 +1893,7 @@ Master attempts this stage after normal stages, including after a stage error, w
         local size = id == "master" and UDim2.new(1 / 3, -4, 0, 28) or UDim2.fromOffset(178, 28)
         local open = button(id == "master" and masterLayout.tools or page.frame, "Actions & conditions", position, size)
         open.Name, open.TextSize = "OpenStageGuide", 11
+        runScope.masterAllowed[open] = true
         connect(open.Activated, function()
             local settings = {}
             if id == "master" then
@@ -1829,6 +1960,7 @@ end
 do
     local refresh = button(masterLayout.tools, "Refresh script", UDim2.new(1 / 3, 2, 0, 0), UDim2.new(1 / 3, -4, 0, 28))
     refresh.Name, refresh.TextSize = "RefreshScriptOnce", 12
+    runScope.masterAllowed[refresh] = true
     local refreshing = false
     connect(refresh.Activated, function()
         if not alive or refreshing then return end
@@ -1875,6 +2007,7 @@ end
 do
     local copyLogs = button(masterLayout.tools, "Copy logs", UDim2.new(2 / 3, 4, 0, 0), UDim2.new(1 / 3, -4, 0, 28))
     copyLogs.Name, copyLogs.TextSize = "CopyScriptLogs", 12
+    runScope.masterAllowed[copyLogs] = true
     connect(copyLogs.Activated, function()
         if not alive then return end
         local copy = type(setclipboard) == "function" and setclipboard
@@ -1900,7 +2033,7 @@ end
 
 do
     local toggle = masterLayout.setting(masterLayout.automation, "WorkspaceCleanupToggle", "Clean workspace extras",
-        "Runs with the shared unit-sequence cooldown.")
+        "Includes other plots/weather; works with Required Units OFF; shares its cooldown.")
     local function refresh()
         local enabled = CONFIG.General.WorkspaceCleanupEnabled
         toggle.Text = enabled and "ON" or "OFF"
@@ -1951,26 +2084,7 @@ do
             item.TextColor3 = colors.text
         end
     end
-    masterLayout.text(card, "Works expanded or minimized. Roll/teleport shortcuts stop Master. Ignored while typing.", 11)
-end
-
-do
-    local toggle = masterLayout.setting(masterLayout.automation, "DeleteOtherPlotsToggle", "Clear other plots and weather",
-        "Keeps your plot; rejoin to restore removed effects.")
-    local function refresh()
-        local enabled = CONFIG.General.DeleteOtherPlots
-        toggle.Text = enabled and "ON" or "OFF"
-        toggle.BackgroundColor3 = enabled and colors.accent or colors.bg
-    end
-    connect(toggle.Activated, function()
-        if not alive then return end
-        CONFIG.General.DeleteOtherPlots = not CONFIG.General.DeleteOtherPlots
-        savePreferences()
-        refresh()
-        if CONFIG.General.DeleteOtherPlots then modules.plotCleanup.start()
-        else modules.plotCleanup.stop() end
-    end)
-    refresh()
+    masterLayout.text(card, "Works expanded or minimized. Other actions are disabled while Master is ON. Ignored while typing.", 11)
 end
 
 do
@@ -2043,6 +2157,9 @@ local function stageStatus(id)
             pages[id].status[key] = value
             if activeRun == "master" and activeStage == id and (key == "Text" or key == "TextColor3") then
                 pages.master.status[key] = key == "Text" and (pages[id].name .. ": " .. value) or value
+            elseif activeRun == "autoSequence" and activeStage == id and pages.autoSequence
+                and (key == "Text" or key == "TextColor3") then
+                pages.autoSequence.status[key] = key == "Text" and (pages[id].name .. ": " .. value) or value
             end
         end,
     })
@@ -2400,8 +2517,10 @@ do
         {"Trial", {"TrialStone", "Plinth1"}, ownPlot = true},
     }) do
         local function teleportOnce()
-            if not alive then return end
-            if busy and (activeRun == "master" or activeRun == "hotbarUpgrade" or activeRun == "tutorial" or activeRun == "autoSequence") and stopRun then stopRun() end
+            if not alive or (busy and activeRun == "master") then return end
+            if busy and activeRun == "autoIndexUnits" then return end
+            if busy and (activeRun == "autoSequence" or activeRun == "autoTrial") and modules.autoSequence and not modules.autoSequence.canStop() then return end
+            if busy and (activeRun == "master" or activeRun == "hotbarUpgrade" or activeRun == "tutorial" or activeRun == "autoSequence" or activeRun == "autoTrial") and stopRun then stopRun() end
             local ok, reason = pcall(function()
                 local parent = destination.ownPlot and getMyPlot() or workspace
                 local target = findPath(parent, destination[2])
@@ -2422,7 +2541,7 @@ do
             if not ok then logError("Teleport", reason) end
         end
         if index == 1 then
-            local shortcut = button(minimizedControls, destination[1], UDim2.new(0.5, 3, 0, 36), UDim2.new(0.5, -3, 0, 28))
+            local shortcut = button(minimizedControls, destination[1], UDim2.new(0.5, 3, 0, 98), UDim2.new(0.5, -3, 0, 26))
             shortcut.Name = "Teleport" .. destination[1]:gsub(" ", "")
             shortcut.TextSize = 12
             shortcut.TextWrapped = true
@@ -2438,6 +2557,7 @@ do
     rollToggle.TextWrapped = true
     rollToggle.BackgroundColor3 = colors.idle
     local function setRollEnabled(enabled)
+        if enabled and busy and activeRun == "autoIndexUnits" then return end
         minimizedActions.rollToken = nil
         minimizedActions.rollEnabled = enabled
         if minimizedActions.rollWorker then pcall(task.cancel, minimizedActions.rollWorker) end
@@ -2470,8 +2590,9 @@ do
     end
     minimizedActions.setRollEnabled = setRollEnabled
     local function toggleRoll()
-        if not alive then return end
-        if busy and (activeRun == "master" or activeRun == "hotbarUpgrade" or activeRun == "tutorial" or activeRun == "autoSequence") and stopRun then stopRun() end
+        if not alive or (busy and activeRun == "master") then return end
+        if busy and (activeRun == "autoSequence" or activeRun == "autoTrial") and modules.autoSequence and not modules.autoSequence.canStop() then return end
+        if busy and (activeRun == "master" or activeRun == "hotbarUpgrade" or activeRun == "tutorial" or activeRun == "autoSequence" or activeRun == "autoTrial") and stopRun then stopRun() end
         setRollEnabled(not minimizedActions.rollEnabled)
     end
     connect(rollToggle.Activated, toggleRoll)
@@ -2508,14 +2629,19 @@ do
         return total
     end
 
+    local openContext
     local function startOpeningCrates()
-        if not alive or minimizedActions.openBusy or (busy and activeRun == "hotbarUpgrade") then return end
+        if busy and activeRun == "autoIndexUnits" then return end
+        if not alive or (busy and activeRun == "master") or minimizedActions.openBusy or (busy and activeRun == "hotbarUpgrade") then return end
+        if busy and (activeRun == "autoSequence" or activeRun == "autoTrial") and modules.autoSequence and not modules.autoSequence.canStop() then return end
         local token = {kind = "open"}
         minimizedActions.openToken, minimizedActions.openBusy = token, true
+        local ctx = {}
+        openContext = ctx
         openCrates.Text = "Opening Crates"
         openCrates.Active, openCrates.AutoButtonColor = false, false
         openCrates.BackgroundColor3 = colors.idle
-        if busy and (activeRun == "master" or activeRun == "hotbarUpgrade" or activeRun == "tutorial" or activeRun == "autoSequence") and stopRun then stopRun() end
+        if busy and (activeRun == "master" or activeRun == "hotbarUpgrade" or activeRun == "tutorial" or activeRun == "autoSequence" or activeRun == "autoTrial") and stopRun then stopRun() end
         setRollEnabled(false)
         if not actionIsCurrent(token) then return end
         minimizedActions.openWorker = task.defer(function()
@@ -2524,9 +2650,10 @@ do
             local ok, result = pcall(function()
                 checkAlive()
                 inventory = path(playerGui, {"MineGui", "InventoryFrame"})
+                ctx.inventory = inventory
                 if not visible(inventory) then
                     inventory.Visible = true
-                    openedInventory = true
+                    openedInventory, ctx.openedInventory = true, true
                 end
                 waitUntil(function() return visible(inventory) end,
                     CONFIG.Units.ActionTimeout, "Waiting for inventory to open for crate counting.", function()
@@ -2542,7 +2669,7 @@ do
                     CONFIG.Units.ActionTimeout, "Waiting for inventory to close before opening crates.", function()
                         inventory.Visible = false
                     end)
-                openedInventory = false
+                openedInventory, ctx.openedInventory = false, false
                 if count == 0 then return "No Petalfall Crates found." end
                 local event = getGameEvent()
                 for index = 1, count do
@@ -2559,6 +2686,7 @@ do
                 if not actionIsCurrent(token) then return end
             end
             minimizedActions.openBusy, minimizedActions.openToken, minimizedActions.openWorker = false, nil, nil
+            openContext = nil
             openCrates.Text = "Open crates"
             openCrates.Active, openCrates.AutoButtonColor = true, true
             openCrates.BackgroundColor3 = colors.accent
@@ -2566,12 +2694,27 @@ do
             else logError("Crates", string.format("Stopped after %d requests: %s", sent, tostring(result))) end
         end)
     end
+    minimizedActions.stopOpeningCrates = function()
+        minimizedActions.openToken, minimizedActions.openBusy = nil, false
+        local thread = minimizedActions.openWorker
+        minimizedActions.openWorker = nil
+        if thread and coroutine.status(thread) ~= "dead" then pcall(task.cancel, thread) end
+        local ctx = openContext
+        openContext = nil
+        if ctx and ctx.openedInventory and ctx.inventory and ctx.inventory.Parent then
+            ctx.inventory.Visible = false
+        end
+        openCrates.Text = "Open crates"
+        openCrates.Active, openCrates.AutoButtonColor = true, true
+        openCrates.BackgroundColor3 = colors.accent
+    end
     connect(openCrates.Activated, startOpeningCrates)
 
     connect(UserInputService.InputBegan, function(input, gameProcessedEvent)
         if not alive or gameProcessedEvent or UserInputService:GetFocusedTextBox() then return end
         if not (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
             or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)) then return end
+        if busy and activeRun == "master" and input.KeyCode ~= Enum.KeyCode.One then return end
         local action = hotkeyActions[input.KeyCode]
         if action then action() end
     end)
@@ -2588,62 +2731,11 @@ getMyPlot = function()
     end, LOAD_TIMEOUT, "Your plot was not found (OwnerUserId must match your UserId).")
 end
 
-do
-    local cleanupWorker
-    local function scanOtherPlots()
-
-        local weather = workspace:FindFirstChild("WeatherFX_Local")
-        if weather then weather:ClearAllChildren() end
-
-        local mineWorld = workspace:FindFirstChild("MineWorld")
-        local plots = mineWorld and mineWorld:FindFirstChild("Plots")
-        if not plots then return end
-        local children = plots:GetChildren()
-        local myPlot
-        for _, plot in ipairs(children) do
-            if plot.Name:match("^MinePlot%d+$") and tonumber(plot:GetAttribute("OwnerUserId")) == player.UserId then
-                myPlot = plot
-                break
-            end
-        end
-
-        if not myPlot then return end
-        for _, plot in ipairs(children) do
-            if not alive or not CONFIG.General.DeleteOtherPlots then return end
-            if plot ~= myPlot and plot.Parent == plots and plot.Name:match("^MinePlot%d+$")
-                and tonumber(plot:GetAttribute("OwnerUserId")) ~= player.UserId then
-                plot:Destroy()
-            end
-        end
-    end
-    modules.plotCleanup = {
-        start = function()
-            if cleanupWorker or not alive or not CONFIG.General.DeleteOtherPlots then return end
-            cleanupWorker = task.defer(function()
-                local warned = false
-                while alive and CONFIG.General.DeleteOtherPlots do
-                    local ok, message = pcall(scanOtherPlots)
-                    if not ok and not warned then
-                        logWarning("[Plot Cleanup] " .. tostring(message))
-                    end
-                    warned = not ok
-                    task.wait(1)
-                end
-                cleanupWorker = nil
-            end)
-        end,
-        stop = function()
-            if cleanupWorker then pcall(task.cancel, cleanupWorker) end
-            cleanupWorker = nil
-        end,
-    }
-end
-
 -- Automatic Workspace cleanup shares the unit sequence's cooldown and resets.
--- Each eligible sequence gets one attempt; there is no separate cleanup timer.
--- Other MinePlots/weather use the independent automatic plotCleanup worker above.
+-- Each permitted cycle gets one attempt; there is no separate cleanup timer.
+-- Other MinePlots, weather, and Workspace extras are deleted together in this pass.
 do
-    local status = minimizedActions.newStatus("Keeps script paths and prompts. Rejoin to restore.")
+    local status = minimizedActions.newStatus("Removes other plots/weather; keeps your script paths and prompts. Rejoin to restore.")
 
 -- MAINTENANCE: Keep every Workspace path used anywhere in the script, including
 -- future stage paths. Add new paths here or to PLOT_KEEP before using them.
@@ -2656,6 +2748,7 @@ local WORLD_KEEP = {
     {"EventBoard", "Lectern"},
 }
 local PLOT_KEEP = {
+    {"PlotSpawn"},
     {"Chest"},
     {"Holders"},
     {"Nodes"},
@@ -2726,20 +2819,28 @@ local function makeKeepTree(plots, plot)
 
     keep(plots, false)
     keep(plot, false)
-    -- Other plots belong to the separate DeleteOtherPlots toggle/worker.
-    for _, candidate in ipairs(plots:GetChildren()) do
-        if candidate ~= plot and candidate.Name:match("^MinePlot%d+$") then keep(candidate, true) end
-    end
     for _, names in ipairs(WORLD_KEEP) do keepPath(workspace, names) end
     for _, names in ipairs(PLOT_KEEP) do keepPath(plot, names) end
     keep(player.Character, true)
     keep(workspace.CurrentCamera, true)
     -- Keeping only the prompt is insufficient: deleting its part/model would
     -- destroy the prompt too. keep() also protects every ancestor up to Workspace.
-    -- Include disabled prompts and discover newly spawned prompts on every scan.
-    for _, descendant in ipairs(workspace:GetDescendants()) do
-        if descendant:IsA("ProximityPrompt") then keep(descendant, true) end
+    -- Include disabled/new prompts, but skip other MinePlots and weather entirely.
+    -- Fully kept subtrees already protect their prompts and need no further scan.
+    local function keepPrompts(parent, node)
+        for _, child in ipairs(parent:GetChildren()) do
+            local excluded = (parent == plots and child ~= plot and child.Name:match("^MinePlot%d+$"))
+                or (parent == workspace and child.Name == "WeatherFX_Local")
+            if not excluded then
+                local branch = node and node.children[child]
+                if not (branch and branch.all) then
+                    if child:IsA("ProximityPrompt") then keep(child, true)
+                    else keepPrompts(child, branch) end
+                end
+            end
+        end
     end
+    keepPrompts(workspace, tree)
     -- Terrain is an engine object; do not Clear() its voxels or destroy it.
     for _, child in ipairs(workspace:GetChildren()) do
         if child:IsA("Terrain") then keep(child, true) end
@@ -2787,7 +2888,7 @@ end
     local function refreshAutomaticStatus()
         pages.master.refreshWorkspaceCleanupToggle()
         status.Text = CONFIG.General.WorkspaceCleanupEnabled
-            and "Auto cleanup: shares the unit-sequence cooldown."
+            and "Auto cleanup: plots, weather, and extras; shares the unit-sequence cooldown."
             or "Auto cleanup: OFF."
         status.TextColor3 = colors.muted
     end
@@ -2799,9 +2900,9 @@ end
             CONFIG.General.WorkspaceCleanupEnabled = true
             refreshAutomaticStatus()
         end,
-        runWithSequence = function()
-            if not alive or not CONFIG.General.WorkspaceCleanupEnabled then return end
-            local ok, removed, failed = pcall(scan, true)
+        runWithSequence = function(forceOnce)
+            if not alive or (not forceOnce and not CONFIG.General.WorkspaceCleanupEnabled) then return end
+            local ok, removed, failed = pcall(scan, not forceOnce)
             if not alive then return end
             if ok and failed == 0 then
                 status.Text = string.format("Auto cleanup done: removed %d branches.", removed)
@@ -3087,6 +3188,7 @@ local unitCountSnapshot
 local cycleUnitsPreparedZone
 local cycleUnitUpgradeReadyZone
 local cycleSkipUnitsReason
+local cycleUnitCooldown
 local lastUnitSequence = -math.huge
 local unitSequenceZone
 
@@ -3100,7 +3202,11 @@ refreshUnitCooldown = function()
         pages[id].cooldown.TextColor3 = seconds > 0 and colors.muted or colors.success
     end
 end
-local function unitSequenceCooldownReason()
+local function unitSequenceCooldownReason(raw)
+    if activeRun == "master" and not raw then
+        if cycleUnitCooldown and cycleUnitCooldown.allowed then return nil end
+        return cycleUnitCooldown and cycleUnitCooldown.reason or "shared cooldown permission has not been checked for this cycle."
+    end
     local cooldown = CONFIG.Units.SequenceCooldown
     if type(cooldown) ~= "number" or cooldown ~= cooldown or cooldown < 0 or cooldown == math.huge then
         error("SequenceCooldown must be a finite nonnegative number of seconds.", 0)
@@ -3112,18 +3218,52 @@ local function unitSequenceCooldownReason()
     end
 end
 local function beginUnitSequence(zoneId)
+    if activeRun == "master" then
+        assert(cycleUnitCooldown and cycleUnitCooldown.allowed, "Unit stages were not granted permission for this cycle.")
+        cycleUnitUpgradeReadyZone = zoneId
+        modules.workspaceCleanup.runForCycle()
+        return
+    end
+    -- Manual runs keep their existing direct cooldown behavior.
     lastUnitSequence = os.clock()
     unitSequenceZone = zoneId
     cycleUnitUpgradeReadyZone = zoneId
     refreshUnitCooldown()
     modules.workspaceCleanup.runWithSequence()
 end
+modules.workspaceCleanup.beginCycle = function(zoneId)
+    checkAlive()
+    local reason = unitSequenceCooldownReason(true)
+    local enabled = preferences.stages.units or preferences.stages.upgradingUnit
+        or CONFIG.General.WorkspaceCleanupEnabled
+    cycleUnitCooldown = {
+        allowed = enabled and not reason,
+        reason = reason and "shared cooldown was active at cycle start; wait for the next cycle."
+            or "shared-cooldown stages are OFF for this cycle.",
+        cleanupAttempted = false,
+    }
+    if cycleUnitCooldown.allowed then
+        -- Reserve permission first, then start the one shared timer.
+        lastUnitSequence = os.clock()
+        unitSequenceZone = zoneId
+        cycleUnitUpgradeReadyZone = zoneId
+        refreshUnitCooldown()
+    end
+end
+modules.workspaceCleanup.runForCycle = function()
+    if not alive or activeRun ~= "master" or not CONFIG.General.WorkspaceCleanupEnabled
+        or not cycleUnitCooldown or not cycleUnitCooldown.allowed or cycleUnitCooldown.cleanupAttempted then return false end
+    checkAlive()
+    cycleUnitCooldown.cleanupAttempted = true
+    modules.workspaceCleanup.runWithSequence()
+    return true
+end
 connect(pages.units.resetCooldown.Activated, function()
     if not alive then return end
     lastUnitSequence = -math.huge
     cycleUnitUpgradeReadyZone = nil
     refreshUnitCooldown()
-    logInfo("Required Units", "Sequence cooldown cleared. Next Required Units stage can refresh units/hotbar and check matches.")
+    logInfo("Required Units", "Shared cooldown cleared for Workspace cleanup and unit stages.")
 end)
 local function syncUnitSequenceZone(zoneId)
     local previous = unitSequenceZone
@@ -3198,7 +3338,8 @@ local GameEvent, mineGui, hrp
 local function sellIsActive()
     checkAlive()
     return alive and busy and activeStage == "sell"
-        and (activeRun == "sell" or (activeRun == "master" and preferences.masterEnabled))
+        and (activeRun == "sell" or activeRun == "autoSequence"
+            or (activeRun == "master" and preferences.masterEnabled))
 end
 local function sleepSell(seconds)
     local deadline = os.clock() + seconds
@@ -3677,6 +3818,7 @@ local function scanBestPickaxe(list)
     local reportRetry = newRetryMonitor("Scanning the best Pickaxe")
     local previousTiles = nil
     local previousStates = nil
+    local previousIds = nil
     local stableSince = os.clock()
     local problem = "No Tile children have loaded."
 
@@ -3688,28 +3830,30 @@ local function scanBestPickaxe(list)
         local children = list:GetChildren()
         local tiles = {}
         local states = {}
+        local ids = {}
         local ready = true
         local bestId = nil
         local bestTile = nil
         local secondId, secondTile
-        local id = 2
         for index = 1, #children do
             local tile = children[index]
             if tile.Name == "Tile" then
+                local id = tile.LayoutOrder + 1
                 local state, reason = tileState(tile)
                 table.insert(tiles, tile)
                 table.insert(states, state or "unknown")
+                table.insert(ids, id)
                 if not state then
                     ready = false
                     problem = string.format("Pickaxe ID %d: %s", id, reason)
                 elseif isAvailable(state) then
-
-                    secondId, secondTile = bestId, bestTile
-                    bestId = id
-                    bestTile = tile
+                    if not bestId or id > bestId then
+                        secondId, secondTile = bestId, bestTile
+                        bestId, bestTile = id, tile
+                    elseif id < bestId and (not secondId or id > secondId) then
+                        secondId, secondTile = id, tile
+                    end
                 end
-
-                id = id + 1
             end
         end
 
@@ -3721,7 +3865,8 @@ local function scanBestPickaxe(list)
             local unchanged = previousTiles ~= nil and #previousTiles == #tiles
             if unchanged then
                 for index, tile in ipairs(tiles) do
-                    if previousTiles[index] ~= tile or previousStates[index] ~= states[index] then
+                    if previousTiles[index] ~= tile or previousStates[index] ~= states[index]
+                        or previousIds[index] ~= ids[index] then
                         unchanged = false
                         break
                     end
@@ -3730,6 +3875,7 @@ local function scanBestPickaxe(list)
             if not unchanged then
                 previousTiles = tiles
                 previousStates = states
+                previousIds = ids
                 stableSince = os.clock()
             elseif os.clock() - stableSince >= SETTLE_TIME then
 
@@ -3744,6 +3890,7 @@ local function scanBestPickaxe(list)
         else
             previousTiles = nil
             previousStates = nil
+            previousIds = nil
             stableSince = os.clock()
         end
         reportRetry(problem)
@@ -3997,33 +4144,38 @@ modules.pickaxe = {
         local results = {}
         local function buySelected(choice)
             local selectedId, selectedTile = choice.id, choice.tile
+            local pickName = selectedTile:FindFirstChild("PickName")
+            local name = pickName and (pickName:IsA("TextLabel") or pickName:IsA("TextButton")
+                or pickName:IsA("TextBox")) and pickName.Text or ""
+            local selectedLabel = string.format("Pickaxe ID %d%s", selectedId,
+                name ~= "" and (" (" .. name .. ")") or "")
             local data = readPickaxeCounts()
             maxPickaxes = data.maxPickaxes
             maxInput.Text = tostring(maxPickaxes)
             refreshCountsUI(data)
             local savedCount = data.requestCounts[string.format("%.0f", selectedId)] or 0
             if not unlimited and savedCount >= maxPickaxes then
-                return string.format("Pickaxe ID %d: limit reached (%d/%d).", selectedId, savedCount, maxPickaxes)
+                return string.format("%s: limit reached (%d/%d).", selectedLabel, savedCount, maxPickaxes)
             end
             if selectedTile.Parent ~= list or tileState(selectedTile) ~= "buyable" then
-                return string.format("Pickaxe ID %d: unavailable; no request sent.", selectedId)
+                return string.format("%s: unavailable; no request sent.", selectedLabel)
             end
 
             local count, limitCount, limit = reservePickaxe(selectedId, unlimited)
             maxInput.Text = tostring(limit)
             if not count then
-                return string.format("Pickaxe ID %d: limit reached (%d/%d).", selectedId, limitCount, limit)
+                return string.format("%s: limit reached (%d/%d).", selectedLabel, limitCount, limit)
             end
             if not alive then return "Unloaded; saved slot retained." end
             if selectedTile.Parent ~= list or tileState(selectedTile) ~= "buyable" then
-                return string.format("Pickaxe ID %d: unavailable; saved slot retained.", selectedId)
+                return string.format("%s: unavailable; saved slot retained.", selectedLabel)
             end
             checkAlive()
             event:FireServer("MineBuyPickaxe", selectedId)
             if unlimited then
-                return string.format("ID %d: request sent. Saved %d requests; buy limit disabled.", selectedId, count)
+                return string.format("%s: request sent. Saved %d requests; buy limit disabled.", selectedLabel, count)
             end
-            return string.format("ID %d: request sent. Saved %d/%d.", selectedId, count, limit)
+            return string.format("%s: request sent. Saved %d/%d.", selectedLabel, count, limit)
         end
         for _, choice in ipairs(choices) do
             checkAlive()
@@ -4201,13 +4353,8 @@ local function notifyUpgradeMilestone(kind, zoneId, pips)
 
     local rule = CONFIG.Units.RequiredByZone[zoneId]
     local zoneName = (rule and rule.DisplayName) or zoneId
-    local content
-    if kind == "maxZone" then
-        content = string.format("**%s** reached **MAX zone: %s (%s)**!", player.Name, zoneName, zoneId)
-    else
-        content = string.format("**%s** unlocked **Colossus** in **%s (%s)**!\nColossus progress: **%s**.",
-            player.Name, zoneName, zoneId, pips)
-    end
+    local content = string.format("**%s** reached **MAX zone + Colossus 1** in **%s (%s)**!\nColossus progress: **%s**.",
+        player.Name, zoneName, zoneId, pips)
     local elapsed = math.max(0, os.time() - preferences.firstLoadedAt)
     local elapsedText = "unknown"
     if elapsed >= 3600 then
@@ -4259,10 +4406,6 @@ local function isMaxZone(zoneId)
     end
     return maxZoneId ~= nil and zoneId == maxZoneId
 end
-local function notifyMaxZoneReached(zoneId)
-    if isMaxZone(zoneId) then notifyUpgradeMilestone("maxZone", zoneId) end
-end
-
 local function reachedColossusPips(zone)
     local node = zone:FindFirstChild("Node_Colossus")
     local content = node and node:FindFirstChild("Content")
@@ -4274,7 +4417,10 @@ local function reachedColossusPips(zone)
     local count, maximum = tonumber(countText), tonumber(maxText)
     if count >= 1 and count <= maximum and maximum < math.huge then
         local progress = countText .. "/" .. maxText
-        notifyUpgradeMilestone("colossus", zone.Name:match("^Zone_(Z%d+)$"), progress)
+        local zoneId = zone.Name:match("^Zone_(Z%d+)$")
+        if isMaxZone(zoneId) then
+            notifyUpgradeMilestone("colossus", zoneId, progress)
+        end
         return progress
     end
     return nil
@@ -4503,7 +4649,6 @@ local function scanCurrentUpgradeZone()
     minimizedActions.setNotificationZone(zoneId)
     local level, zone = scanDensity(getUpgradeZone(zoneName))
     syncUnitSequenceZone(zoneId)
-    notifyMaxZoneReached(zoneId)
     logInfo("Upgrades", string.format("Fresh ZoneBoard zone: %s, Density %d.", zoneId, level))
     return zone, zoneId, level
 end
@@ -5410,7 +5555,11 @@ local function finishEquipping(event, plot, zoneId, densityLevel)
             if copies == entry.count and copies < #empty then
                 readStableRequiredHotbar("Confirming hotbar 1 is empty before selecting the next whitelisted stack", function(summary)
                     return summary[1].name == ""
-                end)
+                end, function()
+                    -- Alternate confirmation checks with removal retries until slot 1 is empty.
+                    checkPlot(plot)
+                    event:FireServer("MineAssignHotbar", "1", "")
+                end, true)
             end
             logUnitUpgradeDetail(string.format("%s hotbar 1 batch %d: %s; placed %d copies; %d empty unlocked pads remain.",
                 zoneId, batches, entry.name, copies, #empty - copies))
@@ -5513,7 +5662,7 @@ local function runRequiredUnits()
     return string.format("Removed %d units. %s", removed, finalResult)
 end
 
-modules.units = {run = runRequiredUnits}
+modules.units = {run = runRequiredUnits, numberKey = inventoryDamageKey}
 end)()
 end
 
@@ -6930,7 +7079,7 @@ do
     connect(run.Activated, function()
         if not alive then return end
         if busy and activeRun == "hotbarUpgrade" then stopRun(); return end
-        if busy and activeRun == "master" then stopRun() end
+        if busy and activeRun == "master" then return end
         if busy then status.Text = "Stop the current action first."; return end
         if minimizedActions.openBusy then status.Text = "Wait for the crate batch to finish."; return end
         local any = false
@@ -7344,31 +7493,6 @@ local function clearMiningConnections()
     for _, connection in ipairs(miningConnections) do connection:Disconnect() end
     table.clear(miningConnections)
 end
-local savedMiningVisibility
-local function restoreMiningUI()
-    local saved = savedMiningVisibility
-    savedMiningVisibility = nil
-    if not saved then return end
-    for object, wasVisible in pairs(saved) do
-        -- A removed/replaced UI object must not prevent the other objects from restoring.
-        pcall(function() object.Visible = wasVisible end)
-    end
-    table.clear(saved)
-end
-local function hideMiningUI()
-    restoreMiningUI()
-    local miningPlayerGui = player:FindFirstChildOfClass("PlayerGui")
-    if not miningPlayerGui then return end
-    savedMiningVisibility = {}
-    for _, object in ipairs(miningPlayerGui:GetDescendants()) do
-        -- Keep the script's controls usable, including when hosted inside PlayerGui.
-        if object:IsA("GuiObject") and not object:IsDescendantOf(gui)
-            and not gui:IsDescendantOf(object) and object.Visible then
-            savedMiningVisibility[object] = object.Visible
-            object.Visible = false
-        end
-    end
-end
 local statusLabel = {Text = "Ready"}
 local button = {}
 local function setEnabled(value, message)
@@ -7427,7 +7551,6 @@ local function mine()
 
     local ok, reason = pcall(function()
         assert(type(fireclickdetector) == "function", "Tutorial mining requires fireclickdetector")
-        hideMiningUI()
         while enabled and not closed do
             checkAlive()
             if not plot then
@@ -7475,7 +7598,6 @@ local function mine()
             task.wait()
         end
     end)
-    restoreMiningUI()
     clearMiningConnections()
     running = false
     if not ok then
@@ -8184,7 +8306,6 @@ modules.tutorial = {
     cleanup = function()
         enabled, flowActive, running = false, false, false
         pendingConfirmation, confirmed = false, false
-        restoreMiningUI()
         clearMiningConnections()
         releaseInputs()
     end,
@@ -8198,13 +8319,1169 @@ modules.tutorial = {
             checkFlow()
             if id ~= 1 and id ~= 4 then pause(0.3) end
         end
+        -- The tutorial completed successfully. Persist this before switching
+        -- to Master so the next relog skips the tutorial checker entirely.
+        preferences.tutorialHidden = true
+        minimizedActions.refreshTutorial()
+        if not savePreferences() then
+            consoleWarn("[Tutorial] Completed, but the completion state could not be saved.")
+        end
         return "Tutorial stages 0–7 completed. Game settings were checked live."
     end,
 }
 end)()
 end
 
--- One-shot Trial -> Events -> Mailbox sequence from scripts/auto.luau.
+-- Trade workers are independent of each other and the main stage runner.
+do
+(function()
+local CONFIG = CONFIG.Trade
+local presetsByName = {}
+local contexts = {}
+local autoIndexTradeFrame
+local autoIndexHasOffers, autoIndexTradeReady, autoIndexRetryAt = false, false, 0
+local watchIndexFrame
+local resumeIndexPreset
+local indexSequence, indexSequencePaused = nil, false
+local tradeControls = {
+    accept = {
+        button = button(minimizedControls, "Auto Accept Trade: OFF", UDim2.fromOffset(0, 98), UDim2.new(0.5, -3, 0, 26)),
+        label = "Auto Accept Trade", preference = "autoAcceptTradeEnabled",
+    },
+    ready = {
+        button = button(minimizedControls, "Auto Ready Trade: OFF", UDim2.new(0.5, 3, 0, 98), UDim2.new(0.5, -3, 0, 26)),
+        label = "Auto Ready Trade", preference = "autoReadyTradeEnabled",
+    },
+}
+tradeControls.accept.button.Name, tradeControls.accept.button.TextSize = "AcceptTradeToggle", 11
+tradeControls.ready.button.Name, tradeControls.ready.button.TextSize = "ReadyTradeToggle", 11
+local status = {accept = minimizedActions.newStatus(""), ready = minimizedActions.newStatus(""),
+    preset = minimizedActions.newStatus(""), autoIndexUnits = minimizedActions.newStatus("")}
+
+local function path(root, names)
+    for _, name in ipairs(names) do
+        root = root and root:FindFirstChild(name)
+        if not root then return nil end
+    end
+    return root
+end
+
+local function visible(object)
+    if not object or not object:IsDescendantOf(playerGui) then return false end
+    while object and object ~= playerGui do
+        if object:IsA("GuiObject") and not object.Visible then return false end
+        if object:IsA("LayerCollector") and not object.Enabled then return false end
+        object = object.Parent
+    end
+    return true
+end
+
+local function colorIs(color, r, g, b)
+    return math.floor(color.R * 255 + 0.5) == r
+        and math.floor(color.G * 255 + 0.5) == g
+        and math.floor(color.B * 255 + 0.5) == b
+end
+
+local function guard(ctx)
+    if not alive or contexts[ctx.kind] ~= ctx or ctx.cancelled then error("Trade action stopped.", 0) end
+    if ctx.indexSequence and indexSequence ~= ctx.indexSequence then error("Auto index units stopped.", 0) end
+    if ctx.presetTradeFrame and (path(playerGui, {"MineGui", "TradeFrame"}) ~= ctx.presetTradeFrame
+        or not ctx.presetTradeFrame.Visible) then
+        error("Trade closed or TradeFrame was replaced while placing the preset. Run again.", 0)
+    end
+end
+
+local function setStatus(ctx, message)
+    guard(ctx)
+    -- A background poll must not continually replace a preset's progress message.
+    if status[ctx.kind].Text ~= message then status[ctx.kind].Text = message end
+end
+
+local function log(message, level, ctx)
+    if level == "DEBUG" and not CONFIG.VerboseLogs then return end
+    if not CONFIG.ConsoleLogs and level ~= "ERROR" then return end
+    local label = tradeControls[ctx.kind] and tradeControls[ctx.kind].label or "Trade Preset"
+    if level == "ERROR" then logError(label, message)
+    else logInfo(label, message) end
+end
+local function logChanged(ctx, key, message, level)
+    ctx.logStates = ctx.logStates or {}
+    if ctx.logStates[key] ~= message then
+        ctx.logStates[key] = message
+        log(message, level or "DEBUG", ctx)
+    end
+end
+local function logRetry(ctx, key, message, level)
+    ctx.logTimes = ctx.logTimes or {}
+    local now = os.clock()
+    if not ctx.logTimes[key] or now - ctx.logTimes[key] >= CONFIG.LogRepeatInterval then
+        ctx.logTimes[key] = now
+        log(message, level or "RETRY", ctx)
+    end
+end
+
+local function clickButton(ctx, object, watchGreen, beforeClick)
+    guard(ctx)
+    assert(type(firesignal) == "function", "Volt firesignal is required.")
+    assert(object, "Click target is missing.")
+    local target = object:IsA("GuiButton") and object or nil
+    if not target then
+        for _, child in ipairs(object:GetDescendants()) do
+            if child:IsA("GuiButton") and visible(child) then
+                assert(not target, "Multiple buttons inside " .. object:GetFullName())
+                target = child
+            end
+        end
+    end
+    assert(target, "No clickable button inside " .. object:GetFullName())
+    assert(visible(target), "Button is hidden: " .. target:GetFullName())
+    local eventName = CONFIG.DefaultClickEvent
+    if type(getconnections) == "function" then
+        for _, name in ipairs({"Activated", "MouseButton1Click"}) do
+            local ok, handlers = pcall(getconnections, target[name])
+            local found = false
+            if ok and type(handlers) == "table" then
+                for _, handler in pairs(handlers) do
+                    if handler.Enabled ~= false then found = true; break end
+                end
+            end
+            if found then eventName = name; break end
+        end
+    end
+    guard(ctx)
+    logChanged(ctx, "click:" .. target:GetFullName(), "Click: " .. target:GetFullName() .. "; signal=" .. eventName
+        .. "; Visible=" .. tostring(target.Visible) .. "; effectiveVisible=" .. tostring(visible(target)))
+    if beforeClick and not beforeClick() then return false end
+    if eventName == "Activated" then firesignal(target.Activated, nil, 1)
+    else firesignal(target.MouseButton1Click) end
+    return true
+end
+
+
+local function releasePresetInput(ctx)
+    if ctx.mouseDown then
+        local input = game:GetService("VirtualInputManager")
+        input:SendMouseMoveEvent(0, 0, game)
+        input:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+        ctx.mouseDown = false
+    end
+    if ctx.controlsEnabled ~= nil then
+        if gui.Parent then gui.Enabled = ctx.controlsEnabled end
+        ctx.controlsEnabled = nil
+    end
+end
+
+local function runAcceptTrade(ctx)
+    assert(type(firesignal) == "function", "Volt firesignal is required.")
+    local nextAccept = 0
+    while true do
+        guard(ctx)
+        if not contexts.preset then
+            -- Resolve fresh instances on every poll so new requests and recreated panels work.
+            local requestFrame = path(playerGui, {"MineGui", "TradeRequestFrame"})
+            local requestShown = requestFrame and requestFrame:IsA("GuiObject") and visible(requestFrame)
+            local accept = path(requestFrame, {"Content", "AcceptButton"})
+            if requestShown and accept and accept:IsA("GuiButton") and visible(accept)
+                and os.clock() >= nextAccept then
+                if clickButton(ctx, accept, false, function()
+                    return not contexts.preset and path(playerGui, {"MineGui", "TradeRequestFrame"}) == requestFrame
+                        and path(requestFrame, {"Content", "AcceptButton"}) == accept
+                        and visible(requestFrame) and visible(accept)
+                end) then
+                    nextAccept = os.clock() + CONFIG.TradeClickInterval
+                    logRetry(ctx, "tradeAccept", "Trade request: Accept clicked.", "INFO")
+                end
+            end
+            setStatus(ctx, "Auto Accept Trade ON. Request: " .. (requestShown and "visible" or "hidden") .. ".")
+        end
+        task.wait(CONFIG.TradeAcceptReadyPoll)
+    end
+end
+
+local function runReadyTrade(ctx)
+    assert(type(firesignal) == "function", "Volt firesignal is required.")
+    local nextReady = 0
+    while true do
+        guard(ctx)
+        -- Start a cached index queue before Auto Ready can ready this trade.
+        local indexPending = resumeIndexPreset()
+        if not contexts.preset then
+            local tradeFrame = path(playerGui, {"MineGui", "TradeFrame"})
+            local tradeShown = tradeFrame and tradeFrame:IsA("GuiObject") and visible(tradeFrame)
+            local ready = path(tradeFrame, {"ContentV2", "Footer", "ReadyButton"})
+            local content = ready and ready:FindFirstChild("Content")
+            local green = content and content:IsA("GuiObject")
+                and colorIs(content.BackgroundColor3, 38, 148, 84)
+            if not indexPending and not contexts.preset and tradeShown and ready and ready:IsA("GuiButton") and visible(ready)
+                and green and os.clock() >= nextReady then
+                if clickButton(ctx, ready, false, function()
+                    return not resumeIndexPreset() and not contexts.preset
+                        and path(playerGui, {"MineGui", "TradeFrame"}) == tradeFrame
+                        and path(tradeFrame, {"ContentV2", "Footer", "ReadyButton"}) == ready
+                        and ready:FindFirstChild("Content") == content
+                        and visible(tradeFrame) and visible(ready)
+                        and colorIs(content.BackgroundColor3, 38, 148, 84)
+                end) then
+                    nextReady = os.clock() + CONFIG.TradeClickInterval
+                    logRetry(ctx, "tradeReady", "Trade: green Ready button clicked.", "INFO")
+                end
+            end
+            setStatus(ctx, "Auto Ready Trade ON. Trade: "
+                .. (tradeShown and (green and "Ready is green" or "waiting for green") or "hidden") .. ".")
+        end
+        task.wait(CONFIG.TradeAcceptReadyPoll)
+    end
+end
+tradeControls.accept.run = runAcceptTrade
+tradeControls.ready.run = runReadyTrade
+
+-- Place Preset flow from scripts/auto.luau; retain main UI, lowercase matching and cancellation tracking.
+local function waitPreset(ctx, label, getter, timeout)
+    setStatus(ctx, label)
+    local deadline = timeout and os.clock() + timeout
+    while true do
+        guard(ctx)
+        local result = getter()
+        if result then return result end
+        assert(not deadline or os.clock() < deadline, label .. " (timed out)")
+        task.wait(CONFIG.TradeBagPoll)
+    end
+end
+
+local function tradePresetCards(scroll, preset)
+    local priority, cards = {}, {}
+    for index, name in ipairs(preset) do
+        assert(type(name) == "string" and name ~= "", "Trade preset item names must be nonempty strings.")
+        name = name:lower()
+        if not priority[name] then priority[name] = index end
+    end
+    -- Keep every matching card, even when several cards have the same ItemName.Text or Name.
+    for index, card in ipairs(scroll:GetChildren()) do
+        local itemName = path(card, {"Content", "ItemName"})
+        if card:IsA("GuiObject") and visible(card) and itemName
+            and (itemName:IsA("TextLabel") or itemName:IsA("TextButton") or itemName:IsA("TextBox"))
+            and priority[itemName.Text:lower()] then
+            table.insert(cards, {object = card, itemName = itemName.Text,
+                priority = priority[itemName.Text:lower()], order = card.LayoutOrder, index = index})
+        end
+    end
+    table.sort(cards, function(a, b)
+        if a.priority ~= b.priority then return a.priority < b.priority end
+        if a.order ~= b.order then return a.order < b.order end
+        return a.index < b.index
+    end)
+    return cards
+end
+
+local function clickPresetTarget(ctx, target, rightInset, beforeClick)
+    guard(ctx)
+    assert(target and target:IsA("GuiObject") and visible(target), "Preset click target is hidden.")
+    local position, size = target.AbsolutePosition, target.AbsoluteSize
+    assert(size.X > 1 and size.Y > 0, "Preset click target has no usable size.")
+    local insetX = rightInset and math.min(rightInset, size.X / 2) or size.X / 2
+    local x = math.floor(position.X + size.X - insetX)
+    local y = math.floor(position.Y + size.Y / 2)
+    local screenGui = target:FindFirstAncestorWhichIsA("ScreenGui")
+    if screenGui then
+        local inset = game:GetService("GuiService"):GetGuiInset()
+        x, y = x + inset.X, y + inset.Y
+    end
+    local input = game:GetService("VirtualInputManager")
+    local controls = gui
+    local controlsEnabled = controls and controls.Enabled
+    ctx.controlsEnabled = controlsEnabled
+    ctx.mouseX, ctx.mouseY = x, y
+    local pressed = false
+    local ok, err = pcall(function()
+        if controls then controls.Enabled = false end
+        input:SendMouseMoveEvent(x, y, game)
+        guard(ctx)
+        assert(visible(target), "Preset click target was hidden before clicking.")
+        assert(not beforeClick or beforeClick(), "Preset click target changed before clicking.")
+        input:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        pressed = true
+        ctx.mouseDown = true
+        task.wait(0.05)
+    end)
+    -- Always release the mouse, including when Stop or an input error interrupts the click.
+    local released, releaseError = true, nil
+    if pressed then
+        released, releaseError = pcall(function()
+            if not ok or not alive or ctx.cancelled or contexts[ctx.kind] ~= ctx then
+                x, y = 0, 0
+                input:SendMouseMoveEvent(x, y, game)
+            end
+            input:SendMouseButtonEvent(x, y, 0, false, game, 0)
+            ctx.mouseDown = false
+        end)
+    end
+    if controls and controls.Parent then controls.Enabled = controlsEnabled end
+    ctx.controlsEnabled = nil
+    if not ok then error(err, 0) end
+    if not released then error(releaseError, 0) end
+    guard(ctx)
+    log(target.Name .. ": mouse clicked at " .. tostring(x) .. ", " .. tostring(y) .. ".", "DEBUG", ctx)
+end
+
+local function presetItemCount(text)
+    if type(text) ~= "string" then return nil end
+    return tonumber((text:gsub(",", ""):match("^%s*[xX]?%s*(%d+)%s*$")))
+end
+
+local function presetActualItemCount(field, requireBlankForSingle)
+    if not field or not (field:IsA("TextLabel") or field:IsA("TextButton") or field:IsA("TextBox")) then return nil end
+    -- Bag: hidden means one. Offer: both hidden and blank means one.
+    if field.Visible == false and (not requireBlankForSingle or field.Text == "") then return 1 end
+    return presetItemCount(field.Text)
+end
+
+local function presetBagAmount(entry)
+    local field = path(entry.object, {"Content", "ActualItemCount"})
+    local amount = presetActualItemCount(field, false)
+    assert(amount and amount > 0, "Bag quantity is missing or zero for " .. entry.itemName .. ".")
+    return amount
+end
+
+local function presetTargetAmount(itemName, bagAmount)
+    local name = itemName:lower()
+    if name == "gems" or name == "enchanted dice" or name == "summon scroll" then return bagAmount end
+    return math.min(CONFIG.TradeMaxAmount, bagAmount)
+end
+
+local function selectedPresetAmount(ctx, picker, itemName, bagAmount, alreadyPlaced)
+    local wanted = presetTargetAmount(itemName, bagAmount)
+    local nextClick = 0
+    while true do
+        guard(ctx)
+        local placedOrder = alreadyPlaced and alreadyPlaced()
+        if placedOrder ~= nil then return wanted, placedOrder end
+        assert(ctx.presetTradeFrame:FindFirstChild("AmountPick") == picker and visible(picker),
+            "Amount picker closed during the slider click; Add was not clicked.")
+        local value = path(picker, {"Content", "Amount", "Slider", "Knob", "Row", "Value"})
+        local amount = value and value:IsA("TextLabel")
+            and presetItemCount(value.Text)
+        if amount == wanted then
+            task.wait(CONFIG.TradePresetItemDelay)
+            guard(ctx)
+            assert(ctx.presetTradeFrame:FindFirstChild("AmountPick") == picker and visible(picker),
+                "Amount picker closed before Add could be clicked.")
+            if path(picker, {"Content", "Amount", "Slider", "Knob", "Row", "Value"}) == value
+                and presetItemCount(value.Text) == wanted then return wanted end
+        end
+        setStatus(ctx, "Setting " .. itemName .. ": " .. tostring(amount or "?") .. "/" .. tostring(wanted)
+            .. ". Retrying Track every 1s...")
+        local track = path(picker, {"Content", "Amount", "Slider", "Track", "Content"})
+        if track and track:IsA("GuiObject") and visible(track) and track.AbsoluteSize.X > 1
+            and os.clock() >= nextClick then
+            nextClick = os.clock() + CONFIG.TradeTrackRetry
+            clickPresetTarget(ctx, track, CONFIG.TradeTrackRightInset, function()
+                return ctx.presetTradeFrame:FindFirstChild("AmountPick") == picker and visible(picker)
+                    and path(picker, {"Content", "Amount", "Slider", "Track", "Content"}) == track
+                    and visible(track)
+            end)
+        end
+        task.wait(CONFIG.TradeAddPoll)
+    end
+end
+
+-- These paths come from the saved TradeFrame UI scan. Observe only our offer.
+local function presetOfferState(ctx)
+    guard(ctx)
+    local slots = path(ctx.presetTradeFrame, {"ContentV2", "Top", "MyPane", "Body", "Slots"})
+    assert(slots and slots:IsA("GuiObject") and visible(slots), "Your Offer slots are unavailable; cannot confirm Add.")
+    local state = {records = {}, counts = {}}
+    for _, slot in ipairs(slots:GetChildren()) do
+        if slot:IsA("GuiObject") and visible(slot) then
+            local name = path(slot, {"Content", "ItemName"})
+            local count = path(slot, {"Content", "ActualItemCount"})
+            local amount = presetActualItemCount(count, true)
+            if name and (name:IsA("TextLabel") or name:IsA("TextButton") or name:IsA("TextBox"))
+                and amount and amount > 0 then
+                local normalized = name.Text:lower()
+                local signature = normalized .. "\0" .. tostring(amount) .. "\0" .. tostring(slot.LayoutOrder)
+                table.insert(state.records, {name = normalized, amount = amount, order = slot.LayoutOrder,
+                    signature = signature})
+                state.counts[signature] = (state.counts[signature] or 0) + 1
+            end
+        end
+    end
+    return state
+end
+
+local function findPresetOffer(ctx, itemName, amount, before)
+    local after = presetOfferState(ctx)
+    for _, record in ipairs(after.records) do
+        if record.name == itemName:lower() and record.amount == amount
+            and after.counts[record.signature] > (before.counts[record.signature] or 0) then
+            return record.order
+        end
+    end
+    return nil
+end
+
+local function confirmPresetAdd(ctx, itemName, amount, before)
+    setStatus(ctx, "Confirming " .. itemName .. " in Your Offer...")
+    local deadline = os.clock() + CONFIG.TradeAddConfirmTimeout
+    while true do
+        guard(ctx)
+        local order = findPresetOffer(ctx, itemName, amount, before)
+        if order ~= nil then return order end
+        if os.clock() >= deadline then return nil end
+        task.wait(CONFIG.TradeAddPoll)
+    end
+end
+
+local function dismissPresetPicker(ctx)
+    local deadline, nextClick = os.clock() + CONFIG.TradeAddConfirmTimeout, 0
+    while true do
+        guard(ctx)
+        local picker = ctx.presetTradeFrame:FindFirstChild("AmountPick")
+        if not picker or not picker.Visible then return end
+        local scrim = ctx.presetTradeFrame:FindFirstChild("AmountScrim")
+        assert(scrim and scrim:IsA("GuiButton") and visible(scrim), "Cannot close the previous amount picker for a card retry.")
+        if os.clock() >= nextClick then
+            clickButton(ctx, scrim, false, function()
+                return ctx.presetTradeFrame:FindFirstChild("AmountScrim") == scrim and visible(picker) and visible(scrim)
+            end)
+            nextClick = os.clock() + CONFIG.TradeTrackRetry
+        end
+        assert(os.clock() < deadline, "The previous amount picker did not close; stop and retry the preset.")
+        task.wait(CONFIG.TradeAddPoll)
+    end
+end
+
+local function saveIndexPlacement(ctx, lastUnit, itemName)
+    guard(ctx)
+    local placed = preferences.indexPlacedUnits
+    if itemName then placed[itemName:lower()] = true end
+    local complete = lastUnit ~= nil
+    for _, name in ipairs(presetsByName[ctx.presetKey or CONFIG.TradePreset] or {}) do
+        if placed[name:lower()] ~= true then complete = false; break end
+    end
+    if complete then preferences.indexPlacedUnits = {} end
+    if (itemName or complete) and not savePreferences() then
+        -- Keep confirmed progress in memory if writing or resetting the cache fails.
+        preferences.indexPlacedUnits = placed
+        error("Could not save index placement progress; check executor file access.", 0)
+    end
+    if complete and ctx.indexSequence then ctx.indexSequence.cycleComplete = true end
+    return complete == true
+end
+
+local function runTradePreset(ctx)
+    local presetKey = ctx.presetKey or CONFIG.TradePreset
+    local preset = presetsByName[presetKey]
+    local indexPreset = presetKey:lower() == "index"
+    assert(type(preset) == "table", "Unknown trade preset: " .. tostring(presetKey))
+    if #preset == 0 then
+        return "Done: preset " .. presetKey .. " is empty. Fill in CONFIG[\"trade-preset\"] first."
+    end
+    local bag = waitPreset(ctx, "Waiting for visible BagPane (checking every 1s)...", function()
+        local pane = path(playerGui, {"MineGui", "TradeFrame", "ContentV2", "BagPane"})
+        local scroll = path(pane, {"Body", "Bag", "Scroll"})
+        return pane and pane:IsA("GuiObject") and visible(pane) and scroll and visible(scroll) and scroll
+    end)
+    ctx.presetTradeFrame = path(playerGui, {"MineGui", "TradeFrame"})
+    if indexPreset then
+        watchIndexFrame(ctx.presetTradeFrame)
+        autoIndexTradeFrame = ctx.presetTradeFrame
+    end
+    local cards = tradePresetCards(bag, preset)
+    local lastIndexUnit, indexCycleReset = nil, false
+    if indexPreset then
+        -- Find the final distinct item in configured order, not the end of this 8-card batch.
+        local listed = {}
+        for _, itemName in ipairs(preset) do
+            local name = itemName:lower()
+            if not listed[name] then listed[name], lastIndexUnit = true, name end
+        end
+        if saveIndexPlacement(ctx, lastIndexUnit) then
+            ctx.indexPlacementCount, ctx.indexCycleComplete = 0, true
+            return "Index cycle complete; saved progress reset."
+        end
+        -- Resume across runs/trades while keeping one offered card per item name.
+        local seen, unique = {}, {}
+        for name, placed in pairs(preferences.indexPlacedUnits) do if placed then seen[name] = true end end
+        for _, offered in ipairs(presetOfferState(ctx).records) do seen[offered.name] = true end
+        for _, entry in ipairs(cards) do
+            local name = entry.itemName:lower()
+            if not seen[name] then
+                seen[name] = true
+                table.insert(unique, entry)
+            end
+        end
+        cards = unique
+    end
+    local count, limit = 0, math.min(8, #cards)
+    for index = 1, limit do
+        local entry = cards[index]
+        local bagAmount = presetBagAmount(entry)
+        local wanted = indexPreset and 1 or presetTargetAmount(entry.itemName, bagAmount)
+        -- Keep the baseline for this card across retries; delayed successes count once.
+        local before = presetOfferState(ctx)
+        local placedOrder, attempts = nil, 0
+        repeat
+            guard(ctx)
+            placedOrder = findPresetOffer(ctx, entry.itemName, wanted, before)
+            if placedOrder ~= nil then break end
+            attempts = attempts + 1
+            dismissPresetPicker(ctx)
+            waitPreset(ctx, "Waiting for BagPane before " .. entry.itemName .. "...", function()
+                local pane = path(ctx.presetTradeFrame, {"ContentV2", "BagPane"})
+                return pane and visible(pane) and visible(bag)
+            end)
+            local itemName = path(entry.object, {"Content", "ItemName"})
+            assert(entry.object.Parent == bag and itemName and itemName.Text:lower() == entry.itemName:lower(),
+                "Bag card changed while placing " .. entry.itemName .. ". Run the preset again.")
+            setStatus(ctx, "Selecting " .. entry.itemName .. " (" .. tostring(index) .. "/" .. tostring(limit)
+                .. ", attempt " .. tostring(attempts) .. ")...")
+            assert(clickButton(ctx, entry.object, false, function()
+                local currentName = path(entry.object, {"Content", "ItemName"})
+                return entry.object.Parent == bag and currentName and currentName.Text:lower() == entry.itemName:lower()
+                    and visible(entry.object)
+            end), "Bag card could not be selected.")
+            -- Single-copy cards are added directly by the card click.
+            if bagAmount ~= 1 then
+                local picker = waitPreset(ctx, "Waiting for AmountPick: " .. entry.itemName .. "...", function()
+                    local current = ctx.presetTradeFrame:FindFirstChild("AmountPick")
+                    return current and current:IsA("GuiObject") and visible(current) and current
+                end)
+                local amount, lateOrder
+                if indexPreset then
+                    -- Keep the picker's default quantity; index never clicks Track.
+                    amount = waitPreset(ctx, "Waiting for index amount: " .. entry.itemName .. "...", function()
+                        assert(ctx.presetTradeFrame:FindFirstChild("AmountPick") == picker and visible(picker),
+                            "Amount picker closed before index Add could be clicked.")
+                        local value = path(picker, {"Content", "Amount", "Slider", "Knob", "Row", "Value"})
+                        local current = value and value:IsA("TextLabel") and presetItemCount(value.Text)
+                        return current and current > 0 and current
+                    end, CONFIG.TradeAddConfirmTimeout)
+                    wanted = amount
+                else
+                    amount, lateOrder = selectedPresetAmount(ctx, picker, entry.itemName, bagAmount, function()
+                        return findPresetOffer(ctx, entry.itemName, wanted, before)
+                    end)
+                    if lateOrder ~= nil then placedOrder = lateOrder; break end
+                end
+                local add = waitPreset(ctx, "Waiting for AddButton: " .. entry.itemName .. "...", function()
+                    assert(ctx.presetTradeFrame:FindFirstChild("AmountPick") == picker and visible(picker),
+                        "Amount picker closed before AddButton could be clicked.")
+                    local current = path(picker, {"Content", "Buttons", "AddButton"})
+                    return current and current:IsA("GuiButton") and visible(current) and current.Active and current
+                end, CONFIG.TradeAddConfirmTimeout)
+                -- The offer may have arrived while a previous attempt was being reopened.
+                placedOrder = findPresetOffer(ctx, entry.itemName, amount, before)
+                if placedOrder ~= nil then break end
+                setStatus(ctx, "Adding " .. entry.itemName .. " (quantity " .. tostring(amount) .. ")...")
+                clickPresetTarget(ctx, add, nil, function()
+                    local value = path(picker, {"Content", "Amount", "Slider", "Knob", "Row", "Value"})
+                    return ctx.presetTradeFrame:FindFirstChild("AmountPick") == picker and visible(picker)
+                        and path(picker, {"Content", "Buttons", "AddButton"}) == add and visible(add) and add.Active
+                        and value and presetItemCount(value.Text) == amount
+                end)
+            end
+            placedOrder = confirmPresetAdd(ctx, entry.itemName, wanted, before)
+            if placedOrder == nil then
+                setStatus(ctx, entry.itemName .. " x" .. tostring(wanted) .. " not found in Slots. Retrying the same card...")
+                logRetry(ctx, "presetRetry:" .. tostring(index), "No matching offer after Add; retrying " .. entry.itemName .. ".", "INFO")
+                task.wait(CONFIG.TradeTrackRetry)
+            end
+        until placedOrder ~= nil
+        if indexPreset then
+            autoIndexHasOffers = true
+            indexCycleReset = saveIndexPlacement(ctx, lastIndexUnit, entry.itemName) or indexCycleReset
+        end
+        dismissPresetPicker(ctx)
+        count = count + 1
+        log("Preset " .. presetKey .. ": confirmed " .. entry.itemName .. " x" .. tostring(wanted)
+            .. " in Your Offer at LayoutOrder " .. tostring(placedOrder) .. ".", "INFO", ctx)
+        if index < limit then
+            task.wait(CONFIG.TradePresetItemDelay)
+            guard(ctx)
+        end
+    end
+    ctx.indexPlacementCount = count
+    ctx.indexCycleComplete = indexCycleReset
+    local result = string.format("Done: preset %s processed %d card(s), maximum 8 per run.", presetKey, count)
+    return result .. (indexCycleReset and " Index cycle complete; saved progress reset." or "")
+end
+
+local keys = {}
+local indexPresetKey
+for _, entry in ipairs(CONFIG["trade-preset"]) do
+    assert(type(entry) == "table" and type(entry.Name) == "string" and entry.Name ~= ""
+        and type(entry.Items) == "table", "Each preset needs Name and Items fields.")
+    local key = entry.Name
+    assert(not presetsByName[key], "Duplicate trade preset name: " .. key)
+    presetsByName[key] = entry.Items
+    if key:lower() == "index" then indexPresetKey = indexPresetKey or key end
+    table.insert(keys, key)
+end
+assert(#keys > 0, "Configure at least one ordered trade preset with Name and Items fields.")
+local rows = math.ceil(#keys / 2)
+local visibleRows = math.min(3, rows)
+local height = visibleRows * 30 - 4
+local grid = make("ScrollingFrame", minimizedControls, {
+    Name = "TradePresetGrid", Position = UDim2.fromOffset(0, 158), Size = UDim2.new(1, 0, 0, height),
+    CanvasSize = UDim2.fromOffset(0, rows * 30 - 4), ScrollBarThickness = rows > visibleRows and 3 or 0,
+    ScrollingDirection = Enum.ScrollingDirection.Y, BackgroundTransparency = 1, BorderSizePixel = 0,
+})
+local cells = make("Frame", grid, {
+    Name = "PresetButtons", Size = UDim2.new(1, rows > visibleRows and -6 or 0, 0, rows * 30 - 4),
+    BackgroundTransparency = 1,
+})
+local presetButtons = {}
+for index, key in ipairs(keys) do
+    local column, row = (index - 1) % 2, math.floor((index - 1) / 2)
+    local cell = make("Frame", cells, {
+        Name = "PresetCell" .. tostring(index), BackgroundTransparency = 1,
+        Position = UDim2.new(column * 0.5, column == 0 and 0 or 3, 0, row * 30), Size = UDim2.new(0.5, -3, 0, 26),
+    })
+    local isIndex = key:lower() == "index"
+    local run = button(cell, key, UDim2.fromOffset(0, 0), UDim2.new(1, isIndex and -30 or 0, 1, 0))
+    run.Name, run.TextSize, run.TextWrapped = "TradePreset_" .. key, 11, true
+    local controls = {run = run}
+    if isIndex then
+        local reset = button(cell, "", UDim2.new(1, -26, 0, 0), UDim2.fromOffset(26, 26))
+        reset.Name, reset.TextSize = "TradePresetReset", 18
+        minimizedActions.drawButtonIcon(reset, "refresh")
+        controls.reset = reset
+    end
+    presetButtons[key] = controls
+end
+local autoIndexButton = button(minimizedControls, "Auto index units", UDim2.fromOffset(0, 128), UDim2.new(0.5, -3, 0, 26))
+autoIndexButton.Name, autoIndexButton.TextSize = "AutoIndexUnits", 12
+pages.autoIndexUnits = {name = "Auto index units", run = autoIndexButton,
+    status = status.autoIndexUnits, runText = "Auto index units"}
+minimizedActions.presetExtraHeight = visibleRows * 30
+local notification = minimizedControls:FindFirstChild("MinimizedNotificationBox")
+if notification then notification.Position = UDim2.fromOffset(0, 158 + minimizedActions.presetExtraHeight) end
+local updateStatus = minimizedControls:FindFirstChild("MinimizedUpdateStatus")
+if updateStatus then updateStatus.Position = UDim2.fromOffset(0, 186 + minimizedActions.presetExtraHeight) end
+if minimizedActions.refreshStatus then minimizedActions.refreshStatus() end
+
+local emptyQueueColor, savedQueueColor = Color3.fromRGB(38, 148, 84), Color3.fromRGB(165, 67, 79)
+local function refreshQueueColors()
+    if not alive then return end
+    for _, controls in pairs(presetButtons) do
+        if controls.reset then controls.reset.BackgroundColor3 = indexQueueCached and savedQueueColor or emptyQueueColor end
+    end
+end
+minimizedActions.refreshIndexQueue = refreshQueueColors
+
+local function refreshControls()
+    local placing = contexts.preset
+    for kind, control in pairs(tradeControls) do
+        local ctx = contexts[kind]
+        local running = ctx and not ctx.cancelled and not placing
+        local canToggle = not indexSequence and not placing and (not ctx or not ctx.cancelled)
+        control.button.Text = control.label .. (running and ": ON" or ": OFF")
+        control.button.Active, control.button.AutoButtonColor = canToggle, canToggle
+        control.button.BackgroundColor3 = running and colors.success or colors.idle
+    end
+    for key, controls in pairs(presetButtons) do
+        local ownRun = placing and placing.presetKey == key
+        local enabled = not indexSequence and (not placing or (ownRun and not placing.cancelled))
+        controls.run.Text = ownRun and (placing.cancelled and "Stopping..." or "Stop " .. key) or key
+        controls.run.Active, controls.run.AutoButtonColor = enabled, enabled
+        controls.run.BackgroundColor3 = ownRun and colors.error or (placing and colors.idle or colors.accent)
+        if controls.reset then
+            controls.reset.Active, controls.reset.AutoButtonColor = not indexSequence and not placing, not indexSequence and not placing
+        end
+    end
+    refreshQueueColors()
+end
+local function indexTradeHasOffers(tradeFrame)
+    local slots = path(tradeFrame, {"ContentV2", "Top", "MyPane", "Body", "Slots"})
+    if not slots or not visible(slots) then return nil end
+    for _, slot in ipairs(slots:GetChildren()) do
+        local name = path(slot, {"Content", "ItemName"})
+        if slot:IsA("GuiObject") and visible(slot) and name
+            and (name:IsA("TextLabel") or name:IsA("TextButton") or name:IsA("TextBox"))
+            and name.Text:match("%S") then return true end
+    end
+    return false
+end
+local function resetIndexTrade()
+    autoIndexTradeFrame, autoIndexHasOffers, autoIndexTradeReady = nil, false, false
+end
+local watchedIndexFrame, indexFrameConnections = nil, {}
+watchIndexFrame = function(tradeFrame)
+    if watchedIndexFrame == tradeFrame then return end
+    for _, connection in ipairs(indexFrameConnections) do connection:Disconnect() end
+    table.clear(indexFrameConnections)
+    watchedIndexFrame = tradeFrame
+    resetIndexTrade()
+    if not tradeFrame then return end
+    table.insert(indexFrameConnections, connect(tradeFrame:GetPropertyChangedSignal("Visible"), function()
+        if not tradeFrame.Visible then
+            resetIndexTrade()
+            local ctx = contexts.preset
+            if ctx and ctx.automaticIndex and ctx.presetTradeFrame == tradeFrame then ctx.cancelled = true end
+        end
+    end))
+end
+local function startTrade(kind, callback, presetKey)
+    if not alive or (busy and activeRun == "master") or contexts[kind] then return end
+    local ctx = {kind = kind, presetKey = presetKey or CONFIG.TradePreset}
+    contexts[kind] = ctx
+    if kind == "preset" and ctx.presetKey:lower() == "index" then
+        local tradeFrame = path(playerGui, {"MineGui", "TradeFrame"})
+        if tradeFrame and tradeFrame:IsA("GuiObject") and visible(tradeFrame) then
+            -- Manual index placement also counts as this trade's queue attempt.
+            watchIndexFrame(tradeFrame)
+            autoIndexTradeFrame = tradeFrame
+            autoIndexTradeReady = false
+            autoIndexHasOffers = indexTradeHasOffers(tradeFrame) == true
+        end
+    end
+    refreshControls()
+    local thread = task.defer(function()
+        local ok, result = pcall(callback, ctx)
+        local released, releaseError = pcall(releasePresetInput, ctx)
+        ctx.finished, ctx.succeeded, ctx.result = true, ok and released, released and result or releaseError
+        runScope.background[coroutine.running()] = nil
+        if contexts[kind] ~= ctx then return end
+        contexts[kind] = nil
+        if kind == "preset" and ctx.presetKey:lower() == "index" and autoIndexTradeFrame == ctx.presetTradeFrame then
+            autoIndexTradeReady = ok or ctx.cancelled == true
+            if not ok and not ctx.cancelled then
+                resetIndexTrade()
+                autoIndexRetryAt = os.clock() + CONFIG.TradeTrackRetry
+            end
+        end
+        if not alive then return end
+        refreshControls()
+        if not released then ok, result = false, releaseError end
+        if ctx.cancelled then result = tradeControls[kind] and (tradeControls[kind].label .. ": OFF.") or "Trade preset stopped."
+        elseif not ok then log(tostring(result), "ERROR", ctx); result = "Error: " .. tostring(result) end
+        status[kind].TextColor3 = (ok or ctx.cancelled) and colors.muted or colors.error
+        status[kind].Text = tostring(result)
+    end)
+    ctx.thread = thread
+    runScope.background[thread] = true
+    return ctx
+end
+resumeIndexPreset = function()
+    local tradeFrame = path(playerGui, {"MineGui", "TradeFrame"})
+    -- Receiving index units must never activate the outgoing cached preset.
+    -- Only the frame opened by our saved recipient's request may resume it.
+    if indexSequence then
+        if indexSequence.phase == "collecting" then return false end
+        if indexSequence.phase ~= "trading" or indexSequence.tradeFrame ~= tradeFrame then return true end
+        -- An unseeded/failed first batch must not Ready an empty outgoing trade.
+        if not indexSequence.cycleComplete and not indexQueueCached then return true end
+    elseif indexSequencePaused then return false end
+    watchIndexFrame(tradeFrame)
+    if not tradeFrame or not tradeFrame:IsA("GuiObject") or not visible(tradeFrame) then
+        resetIndexTrade()
+        return false
+    end
+    -- A new trade can reuse the same visible frame while clearing its offers.
+    if not contexts.preset and autoIndexTradeFrame == tradeFrame and autoIndexHasOffers
+        and indexTradeHasOffers(tradeFrame) == false then resetIndexTrade() end
+    if not alive or not indexPresetKey or not indexQueueCached then return false end
+    if (busy and activeRun == "master") or contexts.preset then return true end
+    if autoIndexTradeFrame == tradeFrame then return not autoIndexTradeReady end
+    if os.clock() < autoIndexRetryAt then return true end
+    CONFIG.TradePreset = indexPresetKey
+    local sequence = indexSequence
+    local started = startTrade("preset", function(ctx)
+        ctx.automaticIndex, ctx.presetTradeFrame = true, tradeFrame
+        ctx.indexSequence = sequence
+        while true do
+            guard(ctx)
+            local result = runTradePreset(ctx)
+            if (ctx.indexPlacementCount or 0) > 0 or not indexQueueCached then return result end
+            -- TradeFrame can appear before its bag cards finish loading.
+            setStatus(ctx, "Saved index queue: waiting for unplaced bag cards...")
+            task.wait(CONFIG.TradeBagPoll)
+        end
+    end, indexPresetKey)
+    if started and sequence then
+        started.indexSequence, sequence.ownedPreset = sequence, started
+    end
+    return true -- Block Ready until this trade's index placement finishes.
+end
+local nextIndexCheck = 0
+connect(game:GetService("RunService").Heartbeat, function()
+    if os.clock() < nextIndexCheck then return end
+    nextIndexCheck = os.clock() + CONFIG.TradePoll
+    resumeIndexPreset()
+end)
+for kind, control in pairs(tradeControls) do
+    connect(control.button.Activated, function()
+        if not alive or indexSequence or contexts.preset or (busy and activeRun == "master") then return end
+        local ctx = contexts[kind]
+        if ctx and ctx.cancelled then return end
+        preferences[control.preference] = ctx == nil
+        savePreferences()
+        if ctx then ctx.cancelled = true; refreshControls()
+        else startTrade(kind, control.run) end
+    end)
+end
+for _, key in ipairs(keys) do
+    local controls = presetButtons[key]
+    connect(controls.run.Activated, function()
+        if not alive or indexSequence or (busy and activeRun == "master") then return end
+        if key:lower() == "index" then indexSequencePaused = false end
+        local ctx = contexts.preset
+        if ctx then
+            if ctx.presetKey ~= key or ctx.cancelled then return end
+            ctx.cancelled = true
+            refreshControls()
+        else
+            CONFIG.TradePreset = key
+            startTrade("preset", runTradePreset, key)
+        end
+    end)
+    if controls.reset then
+        connect(controls.reset.Activated, function()
+            if not alive or indexSequence or contexts.preset or (busy and activeRun == "master") then return end
+            indexSequencePaused = false
+            local previous = preferences.indexPlacedUnits
+            preferences.indexPlacedUnits = {}
+            if savePreferences() then
+                status.preset.TextColor3 = colors.success
+                status.preset.Text = "Index preset queue reset."
+            else
+                preferences.indexPlacedUnits = previous
+                status.preset.TextColor3 = colors.error
+                status.preset.Text = "Could not reset the cached queue. Check executor file access."
+            end
+            refreshQueueColors()
+        end)
+    end
+end
+-- One main-run owner coordinates collection, movement, and every outgoing trade.
+local INDEX_MEETING = Vector3.new(-5954.041504, 503.696716, -6001.407227)
+local INDEX_RETURN_RADIUS, INDEX_PLAYER_RADIUS = 5, 25
+
+local function indexTradeVisible(name)
+    local frame = path(playerGui, {"MineGui", name})
+    return frame and frame:IsA("GuiObject") and frame.Visible, frame
+end
+
+local function indexTrading()
+    return indexTradeVisible("TradeRequestFrame") or indexTradeVisible("TradeFrame")
+end
+
+local function indexRoot(owner)
+    local character = owner.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+
+local function indexTeleport(root, destination)
+    root.CFrame = destination
+    root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+end
+
+local function indexNames(container, hotbar, names)
+    if not container then return end
+    for _, row in ipairs(container:GetChildren()) do
+        local item = row
+        if hotbar then item = row:FindFirstChild("ItemFrame") end
+        local field = path(item, {"Content", "ItemName"})
+        if item and item:IsA("GuiObject") and item.Visible and field
+            and (field:IsA("TextLabel") or field:IsA("TextButton") or field:IsA("TextBox")) then
+            names[field.Text:lower()] = true
+        end
+    end
+end
+
+local function stopIndexTradeContext(kind)
+    local ctx = contexts[kind]
+    if not ctx then return end
+    ctx.cancelled, contexts[kind] = true, nil
+    if ctx.thread then
+        if ctx.thread ~= coroutine.running() and coroutine.status(ctx.thread) ~= "dead" then pcall(task.cancel, ctx.thread) end
+        runScope.background[ctx.thread] = nil
+    end
+    local ok, message = pcall(releasePresetInput, ctx)
+    if not ok then logError("Auto index units", "Could not release trade input: " .. tostring(message)) end
+end
+
+local function setIndexTradeEnabled(kind, enabled)
+    preferences[tradeControls[kind].preference] = enabled
+    if not enabled or (contexts[kind] and contexts[kind].cancelled) then stopIndexTradeContext(kind) end
+    if enabled and alive and not contexts[kind] then startTrade(kind, tradeControls[kind].run) end
+    if alive then refreshControls() end
+end
+
+local returnIndexToPlot
+local function cleanupIndexSequence()
+    local ctx = indexSequence
+    if not ctx then return end
+    ctx.cancelled, ctx.finishing, ctx.phase = true, true, "finishing"
+    -- A stopped sequence must not resume its remaining cache with another player.
+    indexSequencePaused = not ctx.complete or indexQueueCached
+    if contexts.preset and contexts.preset.indexSequence == ctx then stopIndexTradeContext("preset") end
+    resetIndexTrade()
+    for _, name in ipairs({"InventoryFrame", "TradeListFrame"}) do
+        local frame = path(playerGui, {"MineGui", name})
+        if ctx.opened[name] and frame and frame:IsA("GuiObject") then frame.Visible = false end
+    end
+    setIndexTradeEnabled("accept", false)
+    setIndexTradeEnabled("ready", false)
+    local previousStatus = status.autoIndexUnits.Text
+    returnIndexToPlot(ctx, true)
+    indexSequence, contexts.autoIndexUnits = nil, nil
+    setIndexTradeEnabled("accept", true)
+    setIndexTradeEnabled("ready", ctx.previousReady)
+    if not savePreferences() then logError("Auto index units", "Could not save restored trade toggles.") end
+    status.autoIndexUnits.Text = previousStatus
+end
+
+local function indexPause(ctx, seconds)
+    checkAlive()
+    guard(ctx)
+    pause(seconds)
+    guard(ctx)
+end
+
+local function collectIndexUnits(ctx, preset)
+    local nextPositionCheck, nextScan, inventoryReady = 0, 0, false
+    while true do
+        checkAlive()
+        guard(ctx)
+        local now = os.clock()
+        if now >= nextPositionCheck then
+            local root = indexRoot(player)
+            if root then
+                if nextPositionCheck == 0 or (root.Position - INDEX_MEETING).Magnitude > INDEX_RETURN_RADIUS then
+                    indexTeleport(root, CFrame.new(INDEX_MEETING))
+                end
+                nextPositionCheck = now + 3
+            end
+        end
+        if indexTrading() then
+            inventoryReady = false
+            setStatus(ctx, "Collecting index units: waiting for trading to close before checking inventory.")
+        elseif now >= nextScan then
+            nextScan = now + 3
+            local inventory = path(playerGui, {"MineGui", "InventoryFrame"})
+            if inventory and inventory:IsA("GuiObject") and not indexTrading() then
+                local hotbarFrame = path(playerGui, {"MineGui", "HotbarFrame"})
+                if hotbarFrame and hotbarFrame:IsA("GuiObject") then hotbarFrame.Visible = true end
+                if not visible(inventory) then
+                    inventory.Visible, ctx.opened.InventoryFrame = true, true
+                    inventoryReady = false
+                    setStatus(ctx, "Opening inventory; checking again in 3s...")
+                elseif not inventoryReady then
+                    inventoryReady = true
+                else
+                    local scroll = path(inventory, {"Content", "Scroll"})
+                    local hotbar = path(hotbarFrame, {"Content", "Container"})
+                    if scroll and hotbar then
+                        local names, missing = {}, {}
+                        indexNames(scroll, false, names)
+                        indexNames(hotbar, true, names)
+                        for _, name in ipairs(preset) do
+                            if not names[name:lower()] then table.insert(missing, name) end
+                        end
+                        if #missing == 0 and indexRoot(player) then
+                            inventory.Visible = false
+                            return
+                        end
+                        setStatus(ctx, "Collecting index units: " .. tostring(#missing) .. " missing"
+                            .. (#missing > 0 and ("; next: " .. missing[1]) or "; waiting for character") .. ".")
+                    else setStatus(ctx, "Waiting for inventory and hotbar slots to load...") end
+                end
+            else setStatus(ctx, "Waiting for InventoryFrame to load; checking every 3s...") end
+        end
+        indexPause(ctx, 0.1)
+    end
+end
+
+returnIndexToPlot = function(ctx, finalizing)
+    local lastRoot, lastSpawn
+    while true do
+        -- Exit cleanup also runs after Stop/unload revokes the normal run token.
+        if not finalizing then checkAlive(); guard(ctx) end
+        local plots = path(workspace, {"MineWorld", "Plots"})
+        local owned
+        for _, plot in ipairs(plots and plots:GetChildren() or {}) do
+            if tonumber(plot:GetAttribute("OwnerUserId")) == player.UserId then
+                assert(not owned, "Multiple owned plots found; cannot choose PlotSpawn.")
+                owned = plot
+            end
+        end
+        local spawn = owned and owned:FindFirstChild("PlotSpawn")
+        local root = indexRoot(player)
+        if spawn and spawn:IsA("BasePart") and root then
+            if finalizing and root == lastRoot and spawn == lastSpawn
+                and (root.Position - spawn.Position).Magnitude <= INDEX_RETURN_RADIUS then return end
+            indexTeleport(root, spawn.CFrame)
+            if not finalizing then return end
+            lastRoot, lastSpawn = root, spawn
+        else
+            lastRoot, lastSpawn = nil, nil
+        end
+        if finalizing then
+            status.autoIndexUnits.Text = "Returning to PlotSpawn; checking again in 1s..."
+            task.wait(1)
+        else
+            setStatus(ctx, "Waiting for your owned plot's PlotSpawn and character...")
+            indexPause(ctx, 1)
+        end
+    end
+end
+
+local function requestIndexTrade(ctx)
+    ctx.phase, ctx.tradeFrame, ctx.requestSent = "requesting", nil, false
+    while true do
+        checkAlive()
+        guard(ctx)
+        assert(Players:GetPlayerByUserId(ctx.recipientUserId), "Chosen player " .. ctx.recipientName .. " left; sequence ended.")
+        local shown, tradeFrame = indexTradeVisible("TradeFrame")
+        if shown then
+            assert(ctx.requestSent, "A trade opened before requesting the chosen player; sequence stopped.")
+            ctx.phase, ctx.tradeFrame = "trading", tradeFrame
+            return tradeFrame
+        end
+        if not indexTradeVisible("TradeRequestFrame") then
+            local list = path(playerGui, {"MineGui", "TradeListFrame"})
+            if list and list:IsA("GuiObject") then
+                list.Visible, ctx.opened.TradeListFrame = true, true
+                local rows = list:FindFirstChild("List")
+                for _, row in ipairs(rows and rows:GetChildren() or {}) do
+                    local name = path(row, {"Body", "Text", "PlayerName"})
+                    if name and (name:IsA("TextLabel") or name:IsA("TextButton") or name:IsA("TextBox"))
+                        and name.Text:lower() == ctx.recipientName:lower() then
+                        local tradeButton = path(row, {"Body", "TradeButton"})
+                        local content = tradeButton and tradeButton:FindFirstChild("Content")
+                        local target = content and content:IsA("GuiButton") and content or tradeButton
+                        if target and visible(target) then
+                            ctx.requestSent = clickButton(ctx, target, false, function()
+                                return not indexTrading() and name.Text:lower() == ctx.recipientName:lower()
+                                    and visible(target)
+                            end) or ctx.requestSent
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        setStatus(ctx, "Requesting index trade with " .. ctx.recipientName .. "; retrying every 1s...")
+        indexPause(ctx, 1)
+    end
+end
+
+modules.autoIndexUnits = {
+    cleanup = cleanupIndexSequence,
+    isFinishing = function() return indexSequence ~= nil and indexSequence.finishing == true end,
+    run = function()
+        local ctx = {kind = "autoIndexUnits", phase = "collecting", opened = {},
+            previousReady = preferences.autoReadyTradeEnabled}
+        indexSequence, contexts.autoIndexUnits, indexSequencePaused = ctx, ctx, false
+        assert(indexPresetKey and #presetsByName[indexPresetKey] > 0, "Configure a nonempty index preset first.")
+        assert(type(firesignal) == "function", "Volt firesignal is required.")
+        assert(not contexts.preset, "Finish the active trade preset before starting Auto index units.")
+        setIndexTradeEnabled("accept", true)
+        setIndexTradeEnabled("ready", true)
+        assert(savePreferences(), "Could not verify the index cache; check executor file access.")
+        local preset = presetsByName[indexPresetKey]
+        collectIndexUnits(ctx, preset)
+        -- Finish any incoming trade before choosing an outgoing recipient.
+        setIndexTradeEnabled("accept", false)
+        assert(savePreferences(), "Could not save Auto Accept Trade OFF.")
+        while indexTrading() do indexPause(ctx, 0.1) end
+        ctx.phase = "returning"
+        returnIndexToPlot(ctx)
+        local peers = {}
+        for _, peer in ipairs(Players:GetPlayers()) do
+            local root = peer ~= player and indexRoot(peer)
+            if root and (root.Position - INDEX_MEETING).Magnitude <= INDEX_PLAYER_RADIUS then table.insert(peers, peer) end
+        end
+        table.sort(peers, function(a, b) return a.UserId < b.UserId end)
+        if #peers == 0 then
+            ctx.complete = true
+            return "Ended: no other players within 25 studs of the meeting point. Auto Accept Trade ON."
+        end
+        ctx.recipientName, ctx.recipientUserId = peers[1].Name, peers[1].UserId
+        logInfo("Auto index units", "Saved recipient: " .. ctx.recipientName .. " (" .. tostring(ctx.recipientUserId) .. ").")
+        -- A new recipient needs a fresh full index cycle, independent of an older cache.
+        local previous = preferences.indexPlacedUnits
+        preferences.indexPlacedUnits = {}
+        if not savePreferences() then
+            preferences.indexPlacedUnits = previous
+            error("Could not reset the index cache for the chosen player.", 0)
+        end
+        local firstTrade = true
+        repeat
+            local tradeFrame = requestIndexTrade(ctx)
+            if firstTrade then
+                CONFIG.TradePreset = indexPresetKey
+                ctx.ownedPreset = startTrade("preset", function(presetCtx)
+                    presetCtx.indexSequence, presetCtx.automaticIndex, presetCtx.presetTradeFrame = ctx, true, tradeFrame
+                    while true do
+                        local result = runTradePreset(presetCtx)
+                        if (presetCtx.indexPlacementCount or 0) > 0 or presetCtx.indexCycleComplete then return result end
+                        task.wait(CONFIG.TradeBagPoll)
+                    end
+                end, indexPresetKey)
+                assert(ctx.ownedPreset, "Could not start the index preset.")
+                ctx.ownedPreset.indexSequence = ctx
+                firstTrade = false
+            else resumeIndexPreset() end
+            -- The final batch clears the cache while still in the offer: wait for closure too.
+            while path(playerGui, {"MineGui", "TradeFrame"}) == tradeFrame and tradeFrame.Visible do
+                local placement = ctx.ownedPreset
+                if placement and placement.finished and not placement.succeeded and not placement.cancelled
+                    and not indexQueueCached then
+                    error("Index preset failed before its first saved batch: " .. tostring(placement.result), 0)
+                end
+                indexPause(ctx, 0.1)
+            end
+            ctx.phase, ctx.tradeFrame = "requesting", nil
+            while contexts.preset do indexPause(ctx, 0.1) end
+            firstTrade = not indexQueueCached and not ctx.cycleComplete
+        until ctx.cycleComplete and not indexQueueCached
+        ctx.complete = true
+        return "Index queue empty for " .. ctx.recipientName .. ". Auto Accept Trade ON."
+    end,
+    setBusy = function(running)
+        local own = running and activeRun == "autoIndexUnits"
+        autoIndexButton.Active, autoIndexButton.AutoButtonColor = not running or own, not running or own
+        autoIndexButton.Text = own and "Stop Auto index units" or "Auto index units"
+        autoIndexButton.BackgroundColor3 = own and colors.error or (running and colors.idle or colors.accent)
+    end,
+}
+connect(autoIndexButton.Activated, function()
+    if busy and activeRun == "autoIndexUnits" then stopRun()
+    elseif not busy then startRun("autoIndexUnits") end
+end)
+
+modules.trade = {
+    restorePreference = function()
+        if preferences.masterEnabled then return end
+        for kind, control in pairs(tradeControls) do
+            if preferences[control.preference] then startTrade(kind, control.run) end
+        end
+    end,
+    cleanup = function()
+        local complete = true
+        for kind, ctx in pairs(contexts) do
+            ctx.cancelled = true
+            contexts[kind] = nil
+            if ctx.thread then
+                if coroutine.status(ctx.thread) ~= "dead" then pcall(task.cancel, ctx.thread) end
+                runScope.background[ctx.thread] = nil
+            end
+            local ok, err = pcall(releasePresetInput, ctx)
+            if not ok then complete = false; log(tostring(err), "ERROR", ctx) end
+        end
+        if alive then refreshControls() end
+        return complete
+    end,
+}
+refreshControls()
+
+end)()
+end
+
+
+-- Separate one-shot Auto claim and Auto trial actions; Sell reuses the existing full stage.
 do
 (function()
 local CONFIG = {
@@ -8215,17 +9492,50 @@ local CONFIG = {
     RefreshDelay = 0.2,
     SettleTime = 0.15,
     ClaimRetry = 0.1,
+    EventClaimDelay = 0.03,
     TrialClaimDelay = 1,
     Poll = 0.1,
     LoadTimeout = 30,
     DefaultClickEvent = "MouseButton1Click",
 }
 
-local activeContext, logStartedAt
-local run = button(minimizedControls, "Auto tasks: Run once", UDim2.fromOffset(0, 36), UDim2.new(0.5, -3, 0, 28))
-run.Name, run.TextSize = "AutoTasksRun", 12
+local activeContext, logStartedAt, trialCancelToken
+local stopReadyAt, autoRunning, startLockToken, startLockThread = 0, false, nil, nil
+local run = button(minimizedControls, "Auto claim", UDim2.fromOffset(0, 36), UDim2.new(0.5, -3, 0, 26))
+run.Name, run.TextSize = "AutoClaimRun", 12
+local trialRun = button(minimizedControls, "Auto trial", UDim2.new(0.5, 3, 0, 36), UDim2.new(0.5, -3, 0, 26))
+trialRun.Name, trialRun.TextSize = "AutoTrialRun", 12
+local nextButton = button(minimizedControls, "", UDim2.new(0.5, -29, 0, 36), UDim2.fromOffset(26, 26))
+nextButton.Name, nextButton.TextSize = "AutoClaimNext", 18
+nextButton.BackgroundColor3 = colors.surface
+minimizedActions.drawButtonIcon(nextButton, "next")
+local function refreshAutoClaimControls()
+    if not alive then return end
+    local ownRun = busy and activeRun == "autoSequence"
+    local enabled = ownRun and activeContext ~= nil and not activeContext.cleaned
+        and not activeContext.finished and not activeContext.skipRequested and os.clock() >= stopReadyAt
+    nextButton.Visible = ownRun
+    nextButton.Active, nextButton.AutoButtonColor = enabled, enabled
+    local trialRunning = busy and activeRun == "autoTrial"
+    if ownRun or trialRunning then
+        local canStop = os.clock() >= stopReadyAt
+        local activeButton = trialRunning and trialRun or run
+        activeButton.Active, activeButton.AutoButtonColor = canStop, canStop
+        activeButton.Text = canStop and (trialRunning and "Stop auto trial" or "Stop auto claim") or "Starting..."
+        stop.Active, stop.AutoButtonColor = canStop, canStop
+        stop.BackgroundColor3 = canStop and Color3.fromRGB(165, 67, 79) or colors.idle
+    end
+    run.Size = UDim2.new(0.5, ownRun and -33 or -3, 0, 26)
+    local altar = minimizedControls:FindFirstChild("TeleportAltar")
+    if altar then
+        altar.Position = UDim2.new(0.5, 3, 0, 128)
+        altar.Size = UDim2.new(0.5, -3, 0, 26)
+    end
+end
+refreshAutoClaimControls()
 local statusLabel = minimizedActions.newStatus("")
-pages.autoSequence = {name = "Auto tasks", run = run, status = statusLabel, runText = "Auto tasks: Run once"}
+pages.autoSequence = {name = "Auto claim", run = run, status = statusLabel, runText = "Auto claim"}
+pages.autoTrial = {name = "Auto trial", run = trialRun, status = minimizedActions.newStatus(""), runText = "Auto trial"}
 
 local function log(message, level, ctx)
     level = level or "INFO"
@@ -8280,7 +9590,8 @@ local function setStatus(message, quiet)
         if activeContext then logChanged(activeContext, "status", message, "STATE")
         else log(message, "STATE") end
     end
-    if alive and statusLabel then statusLabel.Text = message end
+    local currentStatus = activeRun == "autoTrial" and pages.autoTrial.status or statusLabel
+    if alive and currentStatus then currentStatus.Text = message end
     if alive and overviewStatus then overviewStatus.Text = message end
 end
 
@@ -8305,8 +9616,9 @@ local function rewardLabel(card)
     return name
 end
 
-local function guard(ctx)
+local function checkContext(ctx)
     checkAlive()
+    if ctx.skipRequested then error("Stage ended early.", 0) end
     if ctx ~= activeContext or ctx.cleaned then error("Run stopped.", 0) end
     if ctx.plot then
         local plots = path(workspace, {"MineWorld", "Plots"})
@@ -8322,8 +9634,23 @@ local function guard(ctx)
     if ctx.mailboxFrame and path(playerGui, {"MineGui", "MailboxFrame"}) ~= ctx.mailboxFrame then
         error("MailboxFrame was replaced or removed. Run again.", 0)
     end
+    if ctx.indexFrame and path(playerGui, {"MineGui", "IndexFrame"}) ~= ctx.indexFrame then
+        error("IndexFrame was replaced or removed. Run again.", 0)
+    end
     if ctx.frame and path(playerGui, {"MineGui", "TrialFrame"}) ~= ctx.frame then
         error("TrialFrame was replaced or removed. Run again.", 0)
+    end
+end
+
+-- Keep Trial visible throughout the stage; wait for confirmation before continuing.
+local function guard(ctx)
+    while true do
+        checkContext(ctx)
+        if not ctx.keepTrialVisible or ctx.frame.Visible then return end
+        logRetry(ctx, "trialVisible", "Opening TrialFrame; waiting "
+            .. tostring(CONFIG.VisibilityRetry) .. "s before checking Visible again.")
+        ctx.frame.Visible = true
+        pause(CONFIG.VisibilityRetry)
     end
 end
 
@@ -8576,6 +9903,7 @@ local function inspectRow(ctx, row, state)
 end
 
 local function setTrialVisible(ctx, value)
+    ctx.keepTrialVisible = value
     setVisibleAndWait(ctx, ctx.frame, value)
     logChanged(ctx, "frameVisible", ctx.frame.Visible and "Trial panel opened." or "Trial panel closed.", "INFO")
 end
@@ -8591,7 +9919,7 @@ local function ensureRowsVisible(ctx)
         guard(ctx)
         if isGreen(ctx) then return false end
         local rows = path(ctx.frame, {"Body", "Rows"})
-        local ready = rows ~= nil and rows:IsA("GuiObject") and rows.Visible == true
+        local ready = rows ~= nil and rows:IsA("GuiObject") and rows.Visible == true and visible(rows)
         logChanged(ctx, "rowsVisible", "Rows.Visible = " .. tostring(ready)
             .. "; exists=" .. tostring(rows ~= nil))
         if ready then return true end
@@ -8607,6 +9935,13 @@ local function ensureRowsVisible(ctx)
             ctx.nextMilestonesClick = os.clock() + CONFIG.VisibilityRetry
             ctx.milestonesAttempts = ctx.milestonesAttempts + 1
             logRetry(ctx, "milestonesRetry", "Opening milestones (attempt " .. tostring(ctx.milestonesAttempts) .. ").")
+            -- After a successful click, wait only for the exact Rows container.
+            -- Do not retry Milestones or finish on green while it is loading.
+            waitFor(ctx, "Waiting for TrialFrame.Body.Rows.Visible=true...", function()
+                local current = path(ctx.frame, {"Body", "Rows"})
+                return current and current:IsA("GuiObject") and current.Visible == true and visible(current)
+            end, false, math.huge)
+            return true
         end
         pause(CONFIG.Poll)
     end
@@ -8643,6 +9978,7 @@ local function runTrial(ctx)
     if not title.Visible then return "Skipped: TrialStone title is not visible." end
     log("Trial requested.", "INFO", ctx)
     ctx.trialRequested = true
+    trialCancelToken = nil
     event:FireServer("MineTrialStart")
     local openAt = os.clock() + CONFIG.RefreshDelay
     waitFor(ctx, "Trial requested. Waiting " .. tostring(CONFIG.RefreshDelay)
@@ -8755,6 +10091,10 @@ local function eventIsActive(ctx, header)
     if not strip or header.Parent ~= strip or not hasText then return false, "<missing>" end
     local raw = when.Text
     if not header:IsA("GuiObject") or not header.Visible or not visible(header) then
+        return false, raw
+    end
+    local badge = path(header, {"Badge"})
+    if not badge or not badge:IsA("GuiObject") or not badge.Visible then
         return false, raw
     end
     local text = when.RichText and raw:gsub("<[^>]*>", "") or raw
@@ -8881,7 +10221,7 @@ local function claimEvent(ctx, header)
         local now = os.clock()
         if not sameEventSnapshot(previous, snapshot) then stableSince = now end
         previous = snapshot
-        local settleDelay = total > 0 and CONFIG.ClaimRetry or CONFIG.SettleTime
+        local settleDelay = total > 0 and CONFIG.EventClaimDelay or CONFIG.SettleTime
         if snapshot and stableSince and now - stableSince >= settleDelay then
             logOnce(ctx, "eventLoaded:" .. header.Name, string.format("%s: milestones=%d, reward cards=%d.",
                 header.Name, #snapshot.rows, #snapshot.cards), "INFO")
@@ -8910,7 +10250,7 @@ local function claimEvent(ctx, header)
                     if didClick then
                         clicked[pending] = true
                         total = total + 1
-                        nextClick = os.clock() + CONFIG.ClaimRetry
+                        nextClick = os.clock() + CONFIG.EventClaimDelay
                         stableSince = os.clock()
                         log(header.Name .. " / " .. rewardLabel(pending) .. ": claim clicked", "CLAIM", ctx)
                     end
@@ -8920,7 +10260,7 @@ local function claimEvent(ctx, header)
             error("Event " .. header.Name .. ": milestones/reward locks did not finish loading.", 0)
         end
         setStatus("Checking/claiming " .. header.Name .. ": waiting for visible M1, M2... and reward locks...")
-        pause(CONFIG.Poll)
+        pause(CONFIG.EventClaimDelay)
     end
 end
 
@@ -9163,8 +10503,233 @@ local function runMailbox(ctx)
 end
 
 
--- No waits or retry workers in cancellation: invalidate first, then attempt each
--- cleanup independently so a missing/replaced panel cannot block Stop or unload.
+-- Index categories select Tier_<category>_<number> groups in the shared reward track.
+local function indexCategories(ctx)
+    local scroll = path(ctx.indexFrame, {"Content", "Categories", "Scroll"})
+    local categories = {}
+    if scroll then
+        for _, category in ipairs(scroll:GetChildren()) do
+            local badge = path(category, {"Content", "Container", "Badge"})
+            if category:IsA("GuiObject") and badge and badge:IsA("GuiObject")
+                and badge.Visible == true then
+                table.insert(categories, category)
+            end
+        end
+    end
+    table.sort(categories, function(a, b)
+        if a.LayoutOrder ~= b.LayoutOrder then return a.LayoutOrder < b.LayoutOrder end
+        return a.Name < b.Name
+    end)
+    return categories
+end
+
+local function indexRewardBadge(reward)
+    return path(reward, {"Card", "Content", "ClaimBadge"})
+end
+
+local function indexSnapshot(ctx, categoryName)
+    local track = path(ctx.indexFrame, {"Content", "Scroll", "Rewards", "Track"})
+    if not track or not visible(track) then return nil end
+    -- Include the separator so Z1 cannot match Z12 or Z13.
+    local prefix = "Tier_" .. categoryName .. "_"
+    local tiers, rewards = {}, {}
+    for _, tier in ipairs(track:GetChildren()) do
+        if tier.Name:sub(1, #prefix) == prefix and tier:IsA("GuiObject") then
+            if not visible(tier) then return nil end
+            table.insert(tiers, tier)
+        end
+    end
+    if #tiers == 0 then return nil end
+    table.sort(tiers, function(a, b)
+        local aNumber = tonumber(a.Name:sub(#prefix + 1)) or math.huge
+        local bNumber = tonumber(b.Name:sub(#prefix + 1)) or math.huge
+        if aNumber ~= bNumber then return aNumber < bNumber end
+        return a.Name < b.Name
+    end)
+    for _, tier in ipairs(tiers) do
+        local cards = tier:FindFirstChild("Cards")
+        if not cards or not visible(cards) then return nil end
+        local tierRewards = {}
+        for _, reward in ipairs(cards:GetChildren()) do
+            local number = tonumber(reward.Name:match("^Reward_?(%d+)$"))
+            if number and reward:IsA("GuiObject") then
+                local badge = indexRewardBadge(reward)
+                -- Missing rewards or badges mean the selected category is still loading.
+                if not badge or not badge:IsA("GuiObject") then return nil end
+                table.insert(tierRewards, {object = reward, number = number, cards = cards,
+                    badge = badge, claimable = badge.Visible == true, shown = visible(reward)})
+            end
+        end
+        if #tierRewards == 0 then return nil end
+        table.sort(tierRewards, function(a, b) return a.number < b.number end)
+        for _, entry in ipairs(tierRewards) do table.insert(rewards, entry) end
+    end
+    return {track = track, tiers = tiers, rewards = rewards}
+end
+
+local function sameIndexSnapshot(a, b)
+    if not a or not b or a.track ~= b.track
+        or #a.tiers ~= #b.tiers or #a.rewards ~= #b.rewards then return false end
+    for index, tier in ipairs(a.tiers) do
+        if tier ~= b.tiers[index] then return false end
+    end
+    for index, reward in ipairs(a.rewards) do
+        local other = b.rewards[index]
+        if reward.object ~= other.object or reward.badge ~= other.badge
+            or reward.cards ~= other.cards or reward.claimable ~= other.claimable
+            or reward.shown ~= other.shown then return false end
+    end
+    return true
+end
+
+local function claimIndexCategory(ctx, category)
+    setStatus("Opening Index category: " .. category.Name .. "...")
+    clickButton(ctx, category, false)
+    local selectedAt = os.clock()
+    local nextSelection = selectedAt + CONFIG.VisibilityRetry
+    local nextClick = selectedAt + CONFIG.RefreshDelay
+    local previous, stableSince
+    local attemptedAt, total, categoryReady = {}, 0, false
+    while true do
+        guard(ctx)
+        assert(visible(ctx.indexFrame), "Index UI was hidden during claiming. Run again.")
+        local snapshot = indexSnapshot(ctx, category.Name)
+        local now = os.clock()
+        if not sameIndexSnapshot(previous, snapshot) then stableSince = now end
+        previous = snapshot
+        if snapshot and now - selectedAt >= CONFIG.RefreshDelay
+            and stableSince and (categoryReady or now - stableSince >= CONFIG.SettleTime) then
+            categoryReady = true
+            local remaining, pending = 0, nil
+            for _, entry in ipairs(snapshot.rewards) do
+                if entry.claimable then
+                    remaining = remaining + 1
+                    -- Prefer unclicked rewards, then retry the oldest outstanding claim.
+                    if entry.shown and (not pending or (attemptedAt[entry.object] or -math.huge)
+                        < (attemptedAt[pending.object] or -math.huge)) then
+                        pending = entry
+                    end
+                end
+            end
+            if remaining == 0 and now - stableSince >= CONFIG.SettleTime then
+                log(category.Name .. ": no reward ClaimBadge remains visible.", "INFO", ctx)
+                return total
+            end
+            setStatus("Claiming Index " .. category.Name .. ": " .. tostring(remaining) .. " badge(s) remaining...")
+            if pending and now >= nextClick then
+                local didClick = clickButton(ctx, pending.object, false, function()
+                    return path(ctx.indexFrame, {"Content", "Scroll", "Rewards", "Track"}) == snapshot.track
+                        and pending.cards:IsDescendantOf(snapshot.track)
+                        and pending.object.Parent == pending.cards and visible(pending.object)
+                        and indexRewardBadge(pending.object) == pending.badge
+                        and pending.badge.Visible == true
+                end)
+                if didClick then
+                    if not attemptedAt[pending.object] then total = total + 1 end
+                    attemptedAt[pending.object] = os.clock()
+                    nextClick = os.clock() + CONFIG.ClaimRetry
+                    logRetry(ctx, "indexClaim:" .. pending.object:GetFullName(),
+                        category.Name .. " / " .. pending.cards.Parent.Name .. " / " .. pending.object.Name
+                            .. ": claim requested", "CLAIM")
+                end
+            end
+        else
+            setStatus("Waiting for visible Index tiers and rewards: " .. category.Name .. "...")
+            if not snapshot then categoryReady = false end
+            if not snapshot and now >= nextSelection then
+                clickButton(ctx, category, false)
+                nextSelection = os.clock() + CONFIG.VisibilityRetry
+                selectedAt = os.clock()
+            end
+        end
+        -- Rescan after every click; a click alone never marks a reward as claimed.
+        task.wait(CONFIG.Poll)
+    end
+end
+
+local function closeIndex(ctx, reason)
+    if not ctx or not ctx.indexFrame then return end
+    closeStageFrames(ctx, "IndexFrame", ctx.indexFrame)
+    logChanged(ctx, "indexVisible", "Index panel closed.", "INFO")
+end
+
+local function runIndex(ctx)
+    assert(type(firesignal) == "function", "Volt firesignal is required.")
+    ctx.indexFrame = waitFor(ctx, "Waiting for IndexFrame...", function()
+        return path(playerGui, {"MineGui", "IndexFrame"})
+    end, false)
+    assert(ctx.indexFrame:IsA("GuiObject"), "IndexFrame has no Visible property.")
+    setVisibleAndWait(ctx, ctx.indexFrame, true)
+    waitFor(ctx, "Waiting for Index categories...", function()
+        local scroll = path(ctx.indexFrame, {"Content", "Categories", "Scroll"})
+        return scroll and visible(scroll) and scroll
+    end, false)
+    task.wait(CONFIG.RefreshDelay)
+    local completed, count, claims = {}, 0, 0
+    local quietSince
+    while true do
+        guard(ctx)
+        assert(visible(ctx.indexFrame), "Index UI was hidden during claiming. Run again.")
+        local pending
+        for _, category in ipairs(indexCategories(ctx)) do
+            if not completed[category.Name] then pending = category; break end
+        end
+        if pending then
+            quietSince = nil
+            claims = claims + claimIndexCategory(ctx, pending)
+            completed[pending.Name] = true
+            count = count + 1
+        else
+            quietSince = quietSince or os.clock()
+            if os.clock() - quietSince >= CONFIG.SettleTime then break end
+            task.wait(CONFIG.Poll)
+        end
+    end
+    closeIndex(ctx)
+    return string.format("Done: checked %d Index categories; clicked %d rewards. Index UI closed.", count, claims)
+end
+
+-- Hide TrialFrame before every cancel; retry while TrialHud stays visible.
+-- Keep retries separate so Stop and panel cleanup do not wait for the server.
+local function cancelTrialRequest(ctx)
+    local retryToken = {}
+    trialCancelToken = retryToken
+    if ctx then ctx.keepTrialVisible = false end
+    local function sendRequest()
+        local ok, message = pcall(function()
+            local frame = path(playerGui, {"MineGui", "TrialFrame"})
+            if frame and frame:IsA("GuiObject") then
+                frame.Visible = false
+                assert(not frame.Visible, "TrialFrame did not close before cancellation.")
+            end
+            local event = path(ReplicatedStorage, {"Remotes", "GamestateEvent"})
+            if not event or not event:IsA("RemoteEvent") then event = ctx and ctx.event end
+            assert(event and event:IsA("RemoteEvent"), "GamestateEvent is unavailable for trial cancellation.")
+            event:FireServer("MineTrialCancel")
+            if ctx then ctx.cancelSent = true end
+        end)
+        if ok then log("MineTrialCancel end request sent.", "INFO", ctx)
+        else log("Trial end request failed: " .. tostring(message), "ERROR", ctx) end
+        return ok
+    end
+    local ok = sendRequest()
+    if alive then
+        local thread = task.defer(function()
+            while alive and trialCancelToken == retryToken do
+                task.wait(1)
+                if not alive or trialCancelToken ~= retryToken then break end
+                local hud = path(playerGui, {"MineGui", "TrialHud"})
+                if not hud or not hud:IsA("GuiObject") or not hud.Visible then break end
+                sendRequest()
+            end
+            runScope.background[coroutine.running()] = nil
+            if trialCancelToken == retryToken then trialCancelToken = nil end
+        end)
+        runScope.background[thread] = true
+    end
+    return ok
+end
+
 local function closeContext(ctx)
     if not ctx or ctx.cleaned then return true end
     ctx.cleaned = true
@@ -9176,14 +10741,15 @@ local function closeContext(ctx)
             log("Cleanup failed: " .. tostring(message), "ERROR", ctx)
         end
     end
-    if ctx.trialRequested and not ctx.cancelSent then
-        ctx.cancelSent = true
-        attempt(function()
-            local event = path(ReplicatedStorage, {"Remotes", "GamestateEvent"}) or ctx.event
-            assert(event and event:IsA("RemoteEvent"), "GamestateEvent is unavailable for trial cancellation.")
-            event:FireServer("MineTrialCancel")
-        end)
+    if ctx.stageWorker then
+        local thread = ctx.stageWorker
+        if thread ~= coroutine.running() then
+            attempt(function() if coroutine.status(thread) ~= "dead" then task.cancel(thread) end end)
+        end
+        runScope.threads[thread] = nil
+        ctx.stageWorker = nil
     end
+    if ctx.trialRequested and not ctx.cancelSent and not cancelTrialRequest(ctx) then complete = false end
     local frameName = ctx.stage.frameName
     local original = ctx[ctx.stage.frameKey]
     local current = path(playerGui, {"MineGui", frameName})
@@ -9197,63 +10763,210 @@ local function closeContext(ctx)
     end
     hide(current)
     if original ~= current then hide(original) end
+    if ctx.stage.name == "Sell" then
+        hide(path(playerGui, {"MineGui", "ChestFrame"}))
+        attempt(releaseInputs)
+        attempt(restorePosition)
+        if activeRun == "autoSequence" and activeStage == "sell" then activeStage = "autoSequence" end
+    end
     return complete
 end
 local function cleanupSequence()
     local ctx = activeContext
     activeContext = nil
-    return closeContext(ctx)
+    local closed = closeContext(ctx)
+    if alive then refreshAutoClaimControls() end
+    return closed
 end
-local sequence = {
+connect(nextButton.Activated, function()
+    local ctx = activeContext
+    if not alive or not busy or activeRun ~= "autoSequence" or not ctx
+        or ctx.cleaned or ctx.finished or ctx.skipRequested or os.clock() < stopReadyAt then return end
+    ctx.skipRequested = true
+    ctx.skipClosed = closeContext(ctx)
+    if ctx.stage.name == "Trial" and not ctx.cancelSent then
+        ctx.skipClosed = cancelTrialRequest(ctx) and ctx.skipClosed
+    end
+    ctx.finished = true
+    refreshAutoClaimControls()
+    statusLabel.Text = ctx.stage.name .. " ended early. "
+        .. (ctx.lastStage and "Finishing Auto claim..." or "Moving to the next stage...")
+end)
+local trialSequence = {
     {name = "Trial", run = runTrial, frameName = "TrialFrame", frameKey = "frame"},
+}
+local sequence = {
+    {name = "Sell", frameName = "SellFrame", frameKey = "sellFrame", run = function()
+        local previousStage = activeStage
+        activeStage = "sell"
+        local ok, result = pcall(modules.sell.run)
+        checkAlive()
+        releaseInputs()
+        restorePosition()
+        activeStage = previousStage
+        if not ok then error(result, 0) end
+        return result
+    end},
     {name = "Events", run = runEvents, frameName = "EventsFrameV2", frameKey = "eventsFrame"},
     {name = "Mailbox", run = runMailbox, frameName = "MailboxFrame", frameKey = "mailboxFrame"},
+    {name = "Index", run = runIndex, frameName = "IndexFrame", frameKey = "indexFrame"},
 }
 modules.autoSequence = {
     cleanup = cleanupSequence,
-    run = function()
+    canStop = function() return not autoRunning or os.clock() >= stopReadyAt end,
+    stop = function()
+        -- Auto trial Stop sends the end request even before its request flag is set.
+        local cancelled = true
+        if activeRun == "autoTrial" or (activeContext and activeContext.trialRequested) then
+            cancelled = cancelTrialRequest(activeContext)
+        end
+        local closed = cleanupSequence()
+        return cancelled and closed
+    end,
+    run = function(trialOnly)
         logStartedAt = os.clock()
-        for index, stage in ipairs(sequence) do
+        checkAlive()
+        local stages = trialOnly and trialSequence or sequence
+        for index, stage in ipairs(stages) do
             checkAlive()
             local ctx = {stage = stage, green = false, nextMilestonesClick = 0,
-                milestonesAttempts = 0, greenExitArmed = false}
+                milestonesAttempts = 0, greenExitArmed = false, lastStage = index == #stages}
             activeContext = ctx
-            setStatus(string.format("%d/%d: %s...", index, #sequence, stage.name))
-            local ok, result = pcall(stage.run, ctx)
+            refreshAutoClaimControls()
+            setStatus(string.format("%d/%d: %s...", index, #stages, stage.name))
+            -- A separate stage worker lets Next interrupt every wait, including Sell.
+            local owner = runScope.threads[coroutine.running()]
+            ctx.stageWorker = task.defer(function()
+                runScope.threads[coroutine.running()] = owner
+                ctx.ok, ctx.result = pcall(stage.run, ctx)
+                ctx.finished = true
+                refreshAutoClaimControls()
+            end)
+            while not ctx.finished do
+                checkAlive()
+                task.wait(CONFIG.Poll)
+            end
+            local ok, result = ctx.ok, ctx.result
             -- A cancelled worker must never close the panels of a newer run.
             checkAlive()
             local closed = cleanupSequence()
-            if not ok then error(result, 0) end
+            if ctx.skipRequested then
+                assert(ctx.skipClosed, stage.name .. " cleanup failed; sequence stopped.")
+                result = ctx.stage.name .. " ended early; continuing remaining auto claim stages."
+            elseif not ok then error(result, 0) end
             assert(closed, stage.name .. " cleanup failed; sequence stopped.")
             log(tostring(result), "DONE", ctx)
         end
-        return "Finished: Trial > Events > Mailbox."
+        return trialOnly and "Finished: Trial." or "Finished: Sell > Events > Mailbox > Index."
     end,
     setBusy = function(running)
-        local ownRun = running and activeRun == "autoSequence"
-        run.Active, run.AutoButtonColor = not running or ownRun, not running or ownRun
-        run.Text = ownRun and "Stop auto tasks" or pages.autoSequence.runText
-        run.BackgroundColor3 = ownRun and Color3.fromRGB(165, 67, 79)
+        local claimRunning = running and activeRun == "autoSequence"
+        local trialRunning = running and activeRun == "autoTrial"
+        local ownRun = claimRunning or trialRunning
+        if ownRun and not autoRunning then
+            stopReadyAt = os.clock() + 1
+            local token = {}
+            startLockToken = token
+            startLockThread = task.defer(function()
+                task.wait(1)
+                runScope.background[coroutine.running()] = nil
+                if alive and startLockToken == token then
+                    startLockThread = nil
+                    refreshAutoClaimControls()
+                end
+            end)
+            runScope.background[startLockThread] = true
+        elseif not ownRun then
+            startLockToken, stopReadyAt = nil, 0
+            if startLockThread then
+                if coroutine.status(startLockThread) ~= "dead" then pcall(task.cancel, startLockThread) end
+                runScope.background[startLockThread] = nil
+                startLockThread = nil
+            end
+        end
+        autoRunning = ownRun
+        run.Active, run.AutoButtonColor = not running or claimRunning, not running or claimRunning
+        run.Text = claimRunning and "Stop auto claim" or pages.autoSequence.runText
+        run.BackgroundColor3 = claimRunning and Color3.fromRGB(165, 67, 79)
             or (running and colors.idle or colors.accent)
+        trialRun.Active, trialRun.AutoButtonColor = not running or trialRunning, not running or trialRunning
+        trialRun.Text = trialRunning and "Stop auto trial" or pages.autoTrial.runText
+        trialRun.BackgroundColor3 = trialRunning and Color3.fromRGB(165, 67, 79)
+            or (running and colors.idle or colors.accent)
+        refreshAutoClaimControls()
     end,
 }
-connect(run.Activated, function()
-    if not alive then return end
-    if busy and activeRun == "autoSequence" then stopRun(); return end
-    if busy then return end
-    if minimizedActions.openBusy then
-        statusLabel.Text = "Wait for the crate batch to finish."
-        return
-    end
-    startRun("autoSequence")
-end)
+modules.autoTrial = {
+    run = function() return modules.autoSequence.run(true) end,
+    stop = modules.autoSequence.stop,
+    canStop = modules.autoSequence.canStop,
+}
+for id, control in pairs({autoSequence = run, autoTrial = trialRun}) do
+    connect(control.Activated, function()
+        if not alive then return end
+        if busy and activeRun == id then stopRun(); return end
+        if busy then return end
+        if minimizedActions.openBusy then
+            pages[id].status.Text = "Wait for the crate batch to finish."
+            return
+        end
+        startRun(id)
+    end)
+end
 end)()
 end
 
 local function runPage(id)
     return id == "hotbarUpgrade" and modules.hotbarUpgrade.page or pages[id]
 end
+-- Master locks other action controls; tabs, guides, logs, refresh, and window controls remain usable.
+do
+    local saved = {}
+    for _, control in ipairs({minimizedMaster, pages.master.run, title, close, minimize, stop}) do
+        runScope.masterAllowed[control] = true
+    end
+    minimizedActions.setMasterLocked = function(locked)
+        if locked then
+            for _, control in ipairs(panel:GetDescendants()) do
+                if control:IsA("GuiButton") and not runScope.masterAllowed[control] then
+                    if not saved[control] then
+                        saved[control] = {active = control.Active, auto = control.AutoButtonColor,
+                            color = control.BackgroundColor3}
+                    end
+                    control.Active, control.AutoButtonColor = false, false
+                    if control.Name ~= "TradePresetReset" then control.BackgroundColor3 = colors.idle end
+                end
+            end
+        else
+            for control, state in pairs(saved) do
+                if control.Parent then
+                    control.Active, control.AutoButtonColor = state.active, state.auto
+                    control.BackgroundColor3 = state.color
+                end
+            end
+            table.clear(saved)
+        end
+    end
+    minimizedActions.cancelOngoing = function()
+        local current = coroutine.running()
+        for thread in pairs(runScope.callbacks) do
+            if thread ~= current then
+                if coroutine.status(thread) ~= "dead" then pcall(task.cancel, thread) end
+                runScope.callbacks[thread] = nil
+            end
+        end
+        minimizedActions.setRollEnabled(false)
+        minimizedActions.stopOpeningCrates()
+        releaseInputs()
+        restorePosition()
+        preferences.autoAcceptTradeEnabled = false
+        preferences.autoReadyTradeEnabled = false
+        return modules.trade.cleanup()
+    end
+end
 local function setControls(running)
+    local masterRunning = running and activeRun == "master"
+    if not masterRunning then minimizedActions.setMasterLocked(false) end
     refreshStageToggles(running)
     for _, page in pairs(pages) do
         page.run.Active = not running
@@ -9268,21 +10981,21 @@ local function setControls(running)
     pages.tutorial.run.Text = tutorialRunning and "Stop tutorial" or pages.tutorial.runText
     if tutorialRunning then pages.tutorial.run.BackgroundColor3 = Color3.fromRGB(165, 67, 79) end
 
-    local masterRunning = running and activeRun == "master"
-    pages.master.run.Active = not running or masterRunning
-    pages.master.run.AutoButtonColor = not running or masterRunning
+    pages.master.run.Active, pages.master.run.AutoButtonColor = true, true
     pages.master.run.Text = masterRunning and "Stop Master" or pages.master.runText
-    if masterRunning then pages.master.run.BackgroundColor3 = Color3.fromRGB(165, 67, 79) end
+    pages.master.run.BackgroundColor3 = masterRunning and Color3.fromRGB(165, 67, 79) or colors.accent
     minimizedMaster.Active = pages.master.run.Active
     minimizedMaster.AutoButtonColor = pages.master.run.AutoButtonColor
-    minimizedMaster.Text = masterRunning and "Master: ON" or (running and "Master: Busy" or "Master: OFF")
+    minimizedMaster.Text = masterRunning and "Master: ON" or "Master: OFF"
     minimizedMaster.BackgroundColor3 = pages.master.run.BackgroundColor3
     stop.Active, stop.AutoButtonColor = running, running
     stop.BackgroundColor3 = running and Color3.fromRGB(165, 67, 79) or colors.idle
     if modules.autoSequence then modules.autoSequence.setBusy(running) end
+    if modules.autoIndexUnits then modules.autoIndexUnits.setBusy(running) end
     if modules.hotbarUpgrade then modules.hotbarUpgrade.setBusy(running) end
     if modules.pickaxe and modules.pickaxe.setBusy then modules.pickaxe.setBusy(running) end
     if modules.upgrades and modules.upgrades.setBusy then modules.upgrades.setBusy(running) end
+    if masterRunning then minimizedActions.setMasterLocked(true) end
 end
 
 local function resetRun()
@@ -9300,8 +11013,10 @@ local function resetRun()
     local unitUpgrade = rawget(modules, "upgradingUnit")
     if unitUpgrade and unitUpgrade.cleanup then pcall(unitUpgrade.cleanup) end
     restorePosition()
+    if modules.autoIndexUnits then modules.autoIndexUnits.cleanup() end
     busy, activeRun, activeStage = false, nil, nil
     cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone, cycleSkipUnitsReason = nil, nil, nil
+    cycleUnitCooldown = nil
     worker = nil
     cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady, cycleBestEquipped = nil, nil, nil, false, false
     if alive then
@@ -9331,7 +11046,25 @@ local function skipCycleUnitStages(reason)
 end
 
 do
+(function()
 local completedUnlockPlot
+
+-- Match the prompt's own billboard; never send mouse input to the screen.
+local function slotPromptButton(prompt)
+    local found
+    for _, gui in ipairs(playerGui:GetDescendants()) do
+        if gui:IsA("BillboardGui") and gui.Enabled and gui.Adornee == prompt.Parent then
+            for _, child in ipairs(gui:GetDescendants()) do
+                if child:IsA("GuiButton") and visible(child)
+                    and child.AbsoluteSize.X > 0 and child.AbsoluteSize.Y > 0 then
+                    if found then return nil end -- Ambiguous UI: keep the direct prompt hold.
+                    found = child
+                end
+            end
+        end
+    end
+    return found
+end
 
 local function slotPrompt(plot, name)
     local holders = plot:FindFirstChild("Holders")
@@ -9339,16 +11072,70 @@ local function slotPrompt(plot, name)
     local pad = holder and holder:FindFirstChild("Pad")
     return pad and pad:FindFirstChild("HolderPrompt"), holder
 end
+local function slotPromptPosition(prompt)
+    local parent = prompt.Parent
+    if parent and parent:IsA("Attachment") then return parent.WorldPosition end
+    if parent and parent:IsA("BasePart") then return parent.Position end
+    if parent and parent:IsA("Model") and parent.PrimaryPart then return parent.PrimaryPart.Position end
+    error("Unlock prompt has no usable world position.", 0)
+end
 local function slotReady(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") then return false end
     local action = prompt.ActionText:match("^%s*(.-)%s*$"):lower()
     return action == "place" or action == "pick up"
 end
 local function slotUnlockPrompt(prompt)
-    if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+    if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then return false end
     local action = prompt.ActionText:match("^%s*(.-)%s*$"):lower()
     return action == "unlock" or action == "unlock at the hub"
 end
+-- Reuse the damage parser's decimal keys so even very large suffixes stay comparable.
+local function slotAmountKey(text)
+    local clean = tostring(text):gsub("<[^>]*>", ""):gsub("&nbsp;", " ")
+        :gsub("\194\160", " "):gsub(",", "")
+    local _, dollars = clean:gsub("%$", "")
+    if dollars > 1 then return nil end
+    local key = modules.units.numberKey((clean:gsub("^%s*%$%s*", "")))
+    if key then return key end
+    local amount, tail = clean:match("%$%s*([%d%.]+[eE][%+%-]?%d+)(.*)$")
+    if not amount then amount, tail = clean:match("%$%s*([%d%.]+%s*%a*)(.*)$") end
+    if not amount or tail:match("^[%w%.%+%-]") then return nil end
+    return modules.units.numberKey(amount)
+end
+
+local function slotFunds(plot, name)
+    local prompt, holder = slotPrompt(plot, name)
+    if slotReady(prompt) then return {unlocked = true} end
+    if prompt and prompt:IsA("ProximityPrompt") and not prompt.Enabled then return {disabled = true} end
+    local stats = player:FindFirstChild("leaderstats")
+    local cash = stats and stats:FindFirstChild("Cash")
+    if not cash or not (cash:IsA("StringValue") or cash:IsA("NumberValue") or cash:IsA("IntValue")) then
+        return nil, "Waiting for leaderstats.Cash.Value before unlocking " .. name .. "."
+    end
+    local pad = holder and holder:FindFirstChild("Pad")
+    local label = pad and pad:FindFirstChild("HolderLabel")
+    local bg = label and label:FindFirstChild("BG")
+    local cost = bg and bg:FindFirstChild("CharName")
+    if not cost or not (cost:IsA("TextLabel") or cost:IsA("TextButton") or cost:IsA("TextBox")) then
+        return nil, "Waiting for " .. name .. ".Pad.HolderLabel.BG.CharName unlock cost."
+    end
+    local cashText, costText = tostring(cash.Value), cost.Text
+    local cashKey, costKey = slotAmountKey(cashText), slotAmountKey(costText)
+    if not cashKey or not costKey then
+        return nil, "Waiting for readable cash and " .. name .. " unlock cost: " .. cashText .. " / " .. costText
+    end
+    local enough
+    if cashKey.power ~= costKey.power then
+        enough = cashKey.power > costKey.power
+    else
+        local width = math.max(#cashKey.digits, #costKey.digits)
+        enough = cashKey.digits .. string.rep("0", width - #cashKey.digits)
+            > costKey.digits .. string.rep("0", width - #costKey.digits)
+    end
+    return {enough = enough, cashText = cashText, costText = costText,
+        reason = name .. ": cash " .. cashText .. " must be greater than unlock cost " .. costText .. "."}
+end
+
 modules.unlockSlots = {
 isComplete = function()
     return completedUnlockPlot ~= nil and completedUnlockPlot == getMyPlot()
@@ -9362,10 +11149,16 @@ run = function()
     local reportRetry = newRetryMonitor("Unlocking all Z4 holder slots")
     local attempts, lastAngles = {}, {}
     local pendingTarget, pendingNumber
-    local function stopAtSlot(name)
-        local reason = name .. ": still locked after five unlock attempts."
-        skipCycleUnitStages(reason)
-        return "Skipped: " .. reason .. " Stages 6-8 skipped this cycle."
+    local function waitForFunds(name)
+        while true do
+            checkAlive()
+            checkPlot(plot)
+            local funds, reason = slotFunds(plot, name)
+            if funds then return funds end
+            pages.unlockSlots.status.Text = reason
+            reportRetry(reason)
+            pause(CONFIG.General.RetryInterval)
+        end
     end
     while true do
         checkAlive()
@@ -9384,25 +11177,34 @@ run = function()
             if not slotReady(prompt) then allReady = false end
             if not target and slotUnlockPrompt(prompt) then target, targetNumber = slot.name, slot.number end
         end
+        local pendingPrompt = pendingTarget and slotPrompt(plot, pendingTarget)
+        if pendingPrompt and pendingPrompt:IsA("ProximityPrompt") and not pendingPrompt.Enabled then
+            pendingTarget, pendingNumber = nil, nil
+        end
+        -- Keep an enabled pending slot until its own prompt confirms unlocking.
+        if pendingTarget and not slotReady(slotPrompt(plot, pendingTarget))
+            and (not targetNumber or targetNumber > pendingNumber) then
+            target, targetNumber = pendingTarget, pendingNumber
+        end
         if not target then
             reportRetry(nil, true)
             if allReady then
                 completedUnlockPlot = plot
                 return "Z4: all " .. #slots .. " holder slots are unlocked."
             end
-            return "Skipped: no Unlock / Unlock at the hub prompts found. Stages 6-8 continue normally."
+            return "Skipped: no enabled Unlock / Unlock at the hub prompts found. Stages 6-8 continue normally."
         end
-        if pendingNumber and pendingNumber < targetNumber and not slotReady(slotPrompt(plot, pendingTarget)) then
-            local reason = pendingTarget .. ": previously locked lower slot is not confirmed unlocked."
-            skipCycleUnitStages(reason)
-            return "Skipped: " .. reason .. " Higher slots and stages 6-8 skipped this cycle."
-        end
+
         pendingTarget, pendingNumber = target, targetNumber
         local name = target
-        if (attempts[name] or 0) >= 5 then return stopAtSlot(name) end
-        attempts[name] = (attempts[name] or 0) + 1
-        pages.unlockSlots.status.Text = "Unlocking " .. name .. "; attempt " .. attempts[name] .. "/5..."
-        local ok, unlocked = pcall(function()
+        local funds = waitForFunds(name)
+        if funds.unlocked or funds.disabled then continue end
+        if not funds.enough then return "Skipped: " .. funds.reason end
+        local attempt = (attempts[name] or 0) + 1
+        local holdSeconds = attempt * 5
+        pages.unlockSlots.status.Text = string.format("Unlocking %s; attempt %d; holding %ds (cash %s; cost %s).",
+            name, attempt, holdSeconds, funds.cashText, funds.costText)
+        local ok, unlocked, insufficientFunds = pcall(function()
             local prompt, holder = slotPrompt(plot, target)
             if slotReady(prompt) then return true end
             assert(slotUnlockPrompt(prompt), target .. ": no matching unlock prompt.")
@@ -9417,19 +11219,44 @@ run = function()
             if angle == lastAngles[name] then angle = (angle + 1) % 360 end
             lastAngles[name] = angle
             local radians = math.rad(angle)
-            local offset = Vector3.new(math.cos(radians), 0, math.sin(radians))
-            root.CFrame = CFrame.new(upgrade.Position + Vector3.new(0, CONFIG.Units.TeleportHeight, 0) + offset, upgrade.Position)
+            local position = slotPromptPosition(prompt)
+            local maxDistance = prompt.MaxActivationDistance
+            assert(maxDistance > 0, target .. ": unlock prompt has no activation range.")
+            local safeRange = math.max(maxDistance * 0.8, maxDistance - 0.5)
+            local radius = math.min(1, safeRange * 0.25)
+            local height = math.min(CONFIG.Units.TeleportHeight + 2,
+                math.sqrt(math.max(0, safeRange * safeRange - radius * radius)))
+            local offset = Vector3.new(math.cos(radians) * radius, 0, math.sin(radians) * radius)
+            root.CFrame = CFrame.new(position + Vector3.new(0, height, 0) + offset, position)
             root.AssemblyLinearVelocity, root.AssemblyAngularVelocity = Vector3.zero, Vector3.zero
+            if activeRun == "master" then modules.masterFly.update() end
             pause(CONFIG.Units.TeleportDelay)
             checkPlot(plot)
             assert(player.Character == character and root:IsDescendantOf(character), "Character changed during slot unlocking.")
             prompt = slotPrompt(plot, target)
             if slotReady(prompt) then return true end
+            -- Cash can change during teleporting; read both values again just before holding.
+            local currentFunds = waitForFunds(name)
+            if currentFunds.unlocked then return true end
+            if currentFunds.disabled or not currentFunds.enough then return false, currentFunds end
+            prompt = slotPrompt(plot, target)
             assert(slotUnlockPrompt(prompt) and prompt.Enabled,
                 target .. ": waiting for its enabled unlock prompt.")
+            assert((root.Position - slotPromptPosition(prompt)).Magnitude <= prompt.MaxActivationDistance,
+                target .. ": character moved outside the unlock prompt range.")
+            attempts[name] = attempt
+            local promptButton = slotPromptButton(prompt)
             heldPrompt = prompt
             prompt:InputHoldBegin()
-            pause(2)
+            if promptButton then
+                assert(type(firesignal) == "function", "Volt firesignal is required for the prompt button hold.")
+                local point = promptButton.AbsolutePosition + promptButton.AbsoluteSize * 0.5 + GuiService:GetGuiInset()
+                runScope.heldPromptButton = {button = promptButton, point = point}
+                firesignal(promptButton.MouseButton1Down, point.X, point.Y)
+            else
+                reportRetry(name .. ": prompt UI button not identified; using InputHoldBegin only.")
+            end
+            pause(holdSeconds)
             releaseInputs()
             local deadline = os.clock() + CONFIG.General.SettleTime
             while true do
@@ -9442,6 +11269,10 @@ run = function()
         end)
         releaseInputs()
         checkAlive()
+        if ok and insufficientFunds then
+            if insufficientFunds.disabled then continue end
+            return "Skipped: " .. insufficientFunds.reason
+        end
         if ok and unlocked then
             reportRetry(nil, true)
         else
@@ -9455,11 +11286,12 @@ run = function()
             end)
             checkAlive()
             if not equipped then reportRetry(message) end
-            -- Rescan before the attempt limit so no matching prompts allows normal continuation.
-            if attempts[name] < 5 then pause(CONFIG.General.RetryInterval) end
+            -- No attempt cap: recheck cash and the same pending slot before retrying.
+            pause(CONFIG.General.RetryInterval)
         end
     end
 end}
+end)()
 end
 
 modules.cycleEnd = {run = function()
@@ -9493,7 +11325,7 @@ local function runStage(id, cacheZoneOnly)
     scriptErrors.clearStage(id)
     page.status.Text = tostring(result or "Finished.")
     page.status.TextColor3 = colors.success
-    if id == "hotbarUpgrade" or id == "tutorial" or id == "autoSequence" then logInfo(page.name, page.status.Text)
+    if id == "hotbarUpgrade" or id == "tutorial" or id == "autoSequence" or id == "autoTrial" or id == "autoIndexUnits" then logInfo(page.name, page.status.Text)
     else logStageResult(id, page.status.Text) end
     if activeRun == "master" then
         local enabled = preferences.stages[id]
@@ -9506,7 +11338,10 @@ local function runStage(id, cacheZoneOnly)
 end
 
 startRun = function(id)
-    if not alive or busy or os.clock() - lastRun < CONFIG.General.ButtonDebounce then
+    if not alive then return end
+    -- Master takes over immediately, including an in-progress Auto claim or Auto trial stage.
+    if id == "master" and busy and activeRun ~= "master" then stopRun(true) end
+    if busy or (id ~= "master" and os.clock() - lastRun < CONFIG.General.ButtonDebounce) then
         if alive and (id == "upgradingUnit" or id == "upgradingOldUnit" or id == "master") then
             logUnitUpgradeDetail(string.format("Start ignored for %s: busy=%s; active run=%s; active stage=%s; debounce remaining=%.2fs",
                 id, tostring(busy), tostring(activeRun), tostring(activeStage),
@@ -9515,7 +11350,8 @@ startRun = function(id)
         return
     end
     if id == "tutorial" and (preferences.tutorialHidden or minimizedActions.openBusy) then return end
-    if id == "autoSequence" and minimizedActions.openBusy then return end
+    if (id == "autoSequence" or id == "autoTrial") and minimizedActions.openBusy then return end
+    if id == "autoIndexUnits" and minimizedActions.openBusy then return end
 
     if (id == "pickaxe" or (id == "master" and preferences.stages.pickaxe)) and not modules.pickaxe.prepare() then
         pages.master.status.Text = "Check the Pickaxe tab: its limit could not be saved."
@@ -9524,16 +11360,22 @@ startRun = function(id)
         return
     end
     if not alive or busy then return end
+    if id == "master" and not minimizedActions.cancelOngoing() then
+        pages.master.status.Text = "Could not release the previous trade input. Try Master again."
+        pages.master.status.TextColor3 = colors.error
+        return
+    end
     scriptErrors.clearAll()
     local token = {id = id}
     runScope.current = token
     busy, activeRun, activeStage = true, id, nil
     cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone, cycleSkipUnitsReason = nil, nil, nil
+    cycleUnitCooldown = nil
     cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady, cycleBestEquipped = nil, nil, nil, false, false
     lastRun = os.clock()
     local page = runPage(id)
     page.status.TextColor3 = colors.muted
-    if id == "hotbarUpgrade" or id == "tutorial" or id == "autoSequence" then minimizedActions.setRollEnabled(false) end
+    if id == "hotbarUpgrade" or id == "tutorial" or id == "autoSequence" or id == "autoTrial" or id == "autoIndexUnits" then minimizedActions.setRollEnabled(false) end
     if id == "master" then
         minimizedActions.setRollEnabled(false)
         preferences.masterEnabled = true
@@ -9548,21 +11390,24 @@ startRun = function(id)
         if not actionIsCurrent(token) then return end
         local ok, result = pcall(function()
             if id == "master" then
+                modules.masterFly.start()
                 local cycle = 0
                 while actionIsCurrent(token) do
                     checkAlive()
                     cycle = cycle + 1
                     refreshUnitCooldown()
                     cycleUnitsPreparedZone, cycleUnitUpgradeReadyZone, cycleSkipUnitsReason = nil, nil, nil
+                    cycleUnitCooldown = nil
                     cycleZoneId, cycleZoneName, cycleDensityLevel, cycleZoneReady, cycleBestEquipped = nil, nil, nil, false, false
                     resetStageRows()
                     local cycleOK, cycleError = pcall(function()
                         pages.master.status.Text = "Cycle " .. cycle .. ": reading the current zone..."
-                        getCycleZone()
+                        local zoneId = getCycleZone()
+                        syncUnitSequenceZone(zoneId)
+                        if cycle == 1 then modules.workspaceCleanup.onMasterEnabled() end
+                        modules.workspaceCleanup.beginCycle(zoneId)
                         if cycle == 1 then
-                            modules.workspaceCleanup.onMasterEnabled()
                             savePreferences()
-                            modules.masterFly.start()
                             modules.gameSettings.apply(nil, pages.master.status)
                         end
                         modules.dailyRewards.runCycle()
@@ -9570,6 +11415,9 @@ startRun = function(id)
                             -- Always visit Upgrades; OFF still opens the frame through Visible and scans fresh values.
                             if stage == "upgrades" then
                                 runStage(stage, not preferences.stages.upgrades)
+                            elseif stage == "units" then
+                                modules.workspaceCleanup.runForCycle()
+                                if preferences.stages.units and not cycleSkipUnitsReason then runStage(stage) end
                             elseif stage == "unlockSlots" and preferences.stages[stage]
                                 and cycleZoneId == "Z4" and modules.unlockSlots.isComplete() then
                                 pages.unlockSlots.status.Text = "Skipped: all holder slots are already unlocked for this plot."
@@ -9578,9 +11426,6 @@ startRun = function(id)
                             elseif stage ~= "cycleEnd" and preferences.stages[stage] then
                                 if not (cycleSkipUnitsReason and (stage == "units" or stage == "mutation" or stage == "upgradingUnit")) then
                                     runStage(stage)
-                                    if stage == "sell" then
-                                        modules.plotCleanup.start()
-                                    end
                                 end
                             end
                         end
@@ -9669,18 +11514,33 @@ startRun = function(id)
                 logError(activeStage and runPage(activeStage).name or page.name, result)
             end
         end
+        local tutorialCompleted = id == "tutorial" and ok and preferences.tutorialHidden
         resetRun()
+        if tutorialCompleted and alive then
+            -- Run Master only after the tutorial worker has fully reset.
+            task.defer(function()
+                if alive and not busy then
+                    startRun("master")
+                end
+            end)
+        end
     end)
 end
 
-stopRun = function()
+stopRun = function(force)
     if not alive or not busy then return end
+    if activeRun == "autoIndexUnits" and modules.autoIndexUnits.isFinishing() then return end
+    if (activeRun == "autoSequence" or activeRun == "autoTrial") and not force and modules.autoSequence and not modules.autoSequence.canStop() then return end
     scriptErrors.clearAll()
     local stoppedRun, stoppedStage = activeRun, activeStage
     if stoppedRun == "master" then
         preferences.masterEnabled = false
     end
     runScope.current = nil
+    if (stoppedRun == "autoSequence" or stoppedRun == "autoTrial") and modules[stoppedRun] then
+        local ok, message = pcall(modules[stoppedRun].stop)
+        if not ok then logError(runPage(stoppedRun).name, message) end
+    end
     logInfo(stoppedStage and runPage(stoppedStage).name or "Master", "Stopped by user.")
     logging.flush()
     if worker then pcall(task.cancel, worker) end
@@ -9700,7 +11560,8 @@ stopRun = function()
             setMasterStageState(stoppedStage, "Stopped")
         end
     end
-    footer.Text = stoppedRun == "autoSequence" and "Auto tasks stopped." or "Stopped. Master OFF."
+    footer.Text = stoppedRun == "autoSequence" and "Auto claim stopped."
+        or stoppedRun == "autoTrial" and "Auto trial stopped." or "Stopped. Master OFF."
 end
 connect(stop.Activated, function() stopRun() end)
 
@@ -9723,4 +11584,16 @@ do
 end
 resize()
 modules.workspaceCleanup.refresh()
-if preferences.masterEnabled and not busy then startRun("master") end
+-- One-time startup checker:
+--   tutorial incomplete -> Auto Tutorial
+--   tutorial complete   -> Master
+-- tutorialHidden is persisted in the existing preferences file, so relogs
+-- skip this branch and start Master directly after the tutorial is finished.
+if not busy then
+    if preferences.tutorialHidden then
+        startRun("master")
+    else
+        startRun("tutorial")
+    end
+end
+if not busy then modules.trade.restorePreference() end
