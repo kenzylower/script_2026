@@ -1,6 +1,7 @@
 -- MAINTENANCE: Whenever a new Workspace path is used anywhere in this script,
 -- add it to WORLD_KEEP or PLOT_KEEP below (unless its subtree is already kept).
 -- Workspace auto deletion and Run once must never delete paths the script uses.
+task.wait(35)
 local scriptLoadedAt = os.time()
 
 local CONFIG = {
